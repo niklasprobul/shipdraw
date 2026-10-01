@@ -1603,18 +1603,27 @@ function sea(h,xa,xb,arg){
   let surface = [];
   for (let x = xa; x <= xb; x += 2) surface.push([x,surf(x)]);
   let lines = [surface];
-  let gap = 2.2;
-  let k = 0;
-  for (let d = gap; d < F*2.6; d += gap, gap *= 1.16, k++){
+  // the swell: long undulating lines, each row with its own wavelength, doubled on the far side
+  // of each swell, which falls away from the light
+  let under = x=>(x > h.xb && x < h.xs) ? 1 : 0;
+  let gap = 3;
+  for (let d = gap, k = 0; d < F*2.8; d += gap, gap *= 1.17, k++){
+    let amp = 0.6+k*0.35;
+    let wl = 26+k*6+rand()*10;
+    let ph = rand()*PI*2;
     let line = [];
-    for (let x = xa; x <= xb; x += 2) line.push([x,surf(x)+d+(noise(x*0.03,k*2.7,81)-0.5)*2]);
-    let kk = k;
-    let z = rand()*100;
-    lines.push(...binclip(line,(x,y,t)=>{
-      // darker below the hull: the ship's reflection
-      let under = (x > h.xb && x < h.xs) ? 0.25 : 0;
-      return noise(x*0.025,z)*Math.sin(t*PI)+under > 0.38+kk*0.015;
-    }).true);
+    let back = [];
+    for (let x = xa; x <= xb; x += 1.5){
+      let a = (x/wl)*PI*2+ph+noise(x*0.01,k,85)*3;
+      let y = surf(x)+d+Math.sin(a)*amp;
+      line.push([x,y]);
+      back.push(Math.cos(a) < -0.3 ? [x,y+1.1] : null);
+    }
+    lines.push(...binclip(line,(x,y,t)=>(noise(x*0.02,k*2.3,86)*Math.sin(t*PI)+under(x)*0.3 > 0.3)).true);
+    let run = [];
+    for (let p of back.concat([null])){
+      if (p){ run.push(p); }else{ if (run.length > 2) lines.push(run); run = []; }
+    }
   }
   let occ = [[xa-1e4,surf(xa)]].concat(surface,[[xb+1e4,surf(xb)],[xb+1e4,YW+1e4],[xa-1e4,YW+1e4]]);
   let fronts = [];
