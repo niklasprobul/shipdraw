@@ -1160,7 +1160,9 @@ function make_sail(TL,TR,BL,BR,o){
   let width = Math.max(dist(...TL,...TR),dist(...BL,...BR));
   // seams: head to foot on a four-sided sail; on a triangle they would all meet at the head,
   // so there the cloths run across, from luff to leech
-  if (dist(...TL,...TR) > 1e-6){
+  if (o.seam === 0){
+    // no seams
+  }else if (dist(...TL,...TR) > 1e-6){
     let ns = Math.max(2,Math.round(width/(o.seam || 7)));
     for (let i = 1; i < ns; i++){
       let f = i/ns;
@@ -1177,6 +1179,18 @@ function make_sail(TL,TR,BL,BR,o){
       for (let j = 0; j <= n; j++) seam.push(P(j/n,g));
       lines.push(seam);
     }
+  }
+  // battens: stiff bamboo laths across the sail, drawn double
+  for (let k = 1; k <= (o.battens || 0); k++){
+    let g = k/(o.battens+1);
+    let a = [];
+    let b = [];
+    for (let i = 0; i <= n; i++){
+      let p = P(i/n,g);
+      a.push(p);
+      b.push([p[0],p[1]+1.3]);
+    }
+    lines.push(a,b);
   }
   // painted stripes: every other panel hatched dark
   if (o.stripes){
@@ -1214,7 +1228,7 @@ function make_sail(TL,TR,BL,BR,o){
       lines.push([p,[p[0],p[1]+2]]);
     }
   }
-  return {lines,occ:[outline]};
+  return {lines,occ:[outline],P};
 }
 
 // a sail furled on its yard: a fat roll with lashings
@@ -1226,8 +1240,11 @@ function furled(a,b){
   return {lines,occ:[l.concat(r.slice().reverse())]};
 }
 
-// a spar (yard, boom, gaff, bowsprit) between two points
+// a spar (yard, boom, gaff, bowsprit) between two points. It reaches a little past both ends,
+// as yardarms do, so a sail corner sits inside the spar rather than on its end
 function spar(a,b,w){
+  let e = w*2/(dist(...a,...b) || 1);
+  [a,b] = [lerp2d(...a,...b,-e),lerp2d(...a,...b,1+e)];
   let path = resample([a,b],2);
   let [l,r] = tube(path,u=>w*(1-0.4*Math.abs(u-0.5)*2));
   return {lines:[l,r,[l[0],r[0]],[l[l.length-1],r[r.length-1]]],occ:[l.concat(r.slice().reverse())]};
@@ -1519,246 +1536,1009 @@ function jibs(fm,bow,tip,n,arg,layers){
   }
 }
 
+// ---------------------------------------------------------------- more rigs
+
+// a lateen sail: a long yard slung across the masthead, low at the fore end and high aft,
+// with a triangular sail hanging from it
+function lateen_rig(m,arg,len,ang,layers){
+  let c = m.at(0.9);
+  let d = [Math.cos(ang),-Math.sin(ang)];
+  let lo = [c[0]-d[0]*len*0.4,c[1]-d[1]*len*0.4];
+  let hi = [c[0]+d[0]*len*0.6,c[1]+d[1]*len*0.6];
+  let foot = m.at(0.1);
+  let clew = [m.base[0]+len*0.42,foot[1]];
+  layers.spars.push(spar(lo,hi,1.2));
+  let hgt = dist(...hi,...clew);
+  let s = make_sail(hi,hi,lo,clew,{bulgeR:hgt*0.08,belly:len*0.05,shade:arg.sail_shade,seam:7});
+  layers.sails.push(s);
+  layers.rig.push([clew,[clew[0]+len*0.08,foot[1]+m.height*0.12]]);
+  return hi;
+}
+
+// a junk sail: a lug sail stiffened by battens, the yard rising aft, the sheets fanning down
+// from each batten to one block on the deck
+function junk_rig(m,arg,w,layers){
+  let top = m.at(0.94);
+  let bot = m.at(0.1);
+  let TL = [top[0]-w*0.18,top[1]+w*0.05];
+  let TR = [top[0]+w*0.72,top[1]-w*0.2];
+  let BL = [bot[0]-w*0.22,bot[1]];
+  let BR = [bot[0]+w*0.82,bot[1]-w*0.04];
+  let hgt = dist(...TL,...BL);
+  let nb = arg.battens;
+  let s = make_sail(TL,TR,BL,BR,{bulgeR:hgt*0.14,bulgeL:hgt*0.02,belly:0,seam:0,battens:nb,shade:arg.sail_shade*0.6});
+  layers.sails.push(s);
+  layers.spars.push(spar(TL,TR,1.2),spar(BL,BR,1.1));
+  let block = [BR[0]+w*0.25,m.base[1]+m.height*0.03];
+  for (let k = 1; k <= nb; k += 2){
+    layers.rig.push([s.P(1,k/(nb+1)),block]);
+  }
+}
+
+// a spritsail: a small square sail hanging under the bowsprit
+function spritsail(bow,tip,w,ht,arg,layers){
+  let c = lerp2d(...bow,...tip,0.62);
+  let a = [c[0]-w/2,c[1]];
+  let b = [c[0]+w/2,c[1]];
+  layers.spars.push(spar(a,b,0.9));
+  let s = make_sail(a,b,[a[0]-w*0.04,c[1]+ht],[b[0]+w*0.04,c[1]+ht],{bulgeL:ht*0.03,bulgeR:ht*0.03,belly:ht*0.1,shade:arg.sail_shade,seam:6});
+  layers.sails.unshift(s);
+}
+
+
+// ---------------------------------------------------------------- structures
+
+// a deckhouse: a box with a shadow under its roof, a row of windows and a rail on top
+function deckhouse(x0,x1,y0,y1,F,o){
+  o = o || {};
+  let poly = [[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+  let lines = [];
+  for (let k = 1; k <= 3; k++) lines.push([[x0,y0+k*1.3],[x1,y0+k*1.3]]);
+  let wins = [];
+  if (o.windows !== false){
+    let ww = F*(o.win || 0.1);
+    let wy = lerp(y0,Math.min(y1,y0+F*(o.ht || 0.8)),0.55);
+    for (let x = x0+F*0.3; x < x1-F*0.2; x += F*(o.pitch || 0.24)){
+      let p = o.round ? ellipse(x+ww/2,wy,ww*0.5,ww*0.5,0,10) : [[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7],[x,wy-ww*0.7]];
+      wins.push(p);
+    }
+  }
+  lines = clip_out(lines,wins).concat(wins,[[[x0,y1],[x0,y0],[x1,y0],[x1,y1]]]);
+  if (o.rail !== false){
+    lines.push(...deck_rail({deck:t=>[lerp(x0,x1,t),y0]},0,1,F*0.12));
+  }
+  return {lines,occ:[poly]};
+}
+
+// a raised castle on the deck (galleons): its top follows the sheer, its ends lean outward,
+// it has windows, a rail and the same engraved tone as the hull
+function castle(h,t0,t1,base,ht,tone){
+  let F = h.F;
+  let top = [];
+  let bot = [];
+  for (let t = t0; t <= t1+1e-6; t += 0.01){
+    let [x,y] = h.deck(t);
+    bot.push([x,y-base+2]);
+    top.push([x,y-base-ht]);
+  }
+  let lean = ht*0.25;
+  top[0] = [top[0][0]-lean*(t0 > 0.5 ? 1 : 0),top[0][1]];
+  top[top.length-1] = [top[top.length-1][0]+lean*(t1 < 0.5 ? 1 : 0),top[top.length-1][1]];
+  let poly = top.concat(bot.slice().reverse());
+  let lines = [];
+  for (let k = 0.15; k < 1; k += lerp(0.25,0.12,tone)){
+    lines.push(top.map((p,i)=>lerp2d(...p,...bot[i],k)));
+  }
+  let wins = [];
+  for (let i = 2; i < top.length-2; i += 3){
+    let p = lerp2d(...top[i],...bot[i],0.45);
+    let w = F*0.13;
+    let win = [[p[0]-w/2,p[1]+w*0.6],[p[0]-w/2,p[1]-w*0.3],[p[0],p[1]-w*0.7],[p[0]+w/2,p[1]-w*0.3],[p[0]+w/2,p[1]+w*0.6],[p[0]-w/2,p[1]+w*0.6]];
+    wins.push(win);
+  }
+  lines = clip_multi(lines,poly).true;
+  lines = clip_out(lines,wins).concat(wins,[poly.concat([poly[0]])]);
+  lines.push(...deck_rail({deck:t=>lerp2d(...top[0],...top[top.length-1],t)},0,1,F*0.14));
+  return {lines,occ:[poly]};
+}
+
+// a painted eye at the bow (junks, galleys)
+function bow_eye(h){
+  let [x,y] = h.deck(0.07);
+  y = lerp(y,YW,0.45);
+  let r = h.F*0.22;
+  let eye = [];
+  for (let i = 0; i <= 20; i++){
+    let a = i/20*PI*2;
+    eye.push([x+Math.cos(a)*r,y+Math.sin(a)*r*0.55*(Math.sin(a) > 0 ? 1 : 1.2)]);
+  }
+  let pupil = ellipse(x-r*0.15,y,r*0.32,r*0.32,0,12);
+  return {lines:[eye,pupil,...fill_shape(pupil,0.7)],occ:[eye]};
+}
+
+// fenders: worn rope or tyre bumpers hung over the side (tugs)
+function fenders(h,t0,t1,step){
+  let lines = [];
+  let occ = [];
+  for (let t = t0; t <= t1; t += step){
+    let [x,y] = h.deck(t);
+    let f = ellipse(x,y+h.F*0.32,h.F*0.13,h.F*0.24,0,14);
+    lines.push(f,[[x,y-h.F*0.05],[x,y+h.F*0.08]],...clip_multi(shade_shape(f,1.4,2,2),f).true);
+    occ.push(f);
+  }
+  return {lines,occ};
+}
+
+// a paddle box: the half-round housing of a side wheel, with a sunburst of slats
+function paddle_box(c,R,F){
+  let arc = [];
+  for (let i = 0; i <= 32; i++){
+    let a = PI+i/32*PI;
+    arc.push([c[0]+Math.cos(a)*R,c[1]+Math.sin(a)*R]);
+  }
+  let poly = arc.concat([[c[0]+R,YW+F],[c[0]-R,YW+F]]);
+  let lines = [arc,[[c[0]-R,c[1]],[c[0]-R,YW+F]],[[c[0]+R,c[1]],[c[0]+R,YW+F]]];
+  let inner = arc.map(p=>lerp2d(...c,...p,0.82));
+  let hub = arc.map(p=>lerp2d(...c,...p,0.28));
+  lines.push(inner,hub,[[c[0]-R*0.82,c[1]],[c[0]+R*0.82,c[1]]]);
+  for (let i = 1; i < 12; i++){
+    let a = PI+i/12*PI;
+    lines.push([[c[0]+Math.cos(a)*R*0.28,c[1]+Math.sin(a)*R*0.28],[c[0]+Math.cos(a)*R*0.82,c[1]+Math.sin(a)*R*0.82]]);
+  }
+  // the lower housing, hatched
+  let low = [[c[0]-R,c[1]+1],[c[0]+R,c[1]+1],[c[0]+R,YW+F],[c[0]-R,YW+F]];
+  lines.push(...fill_shape(low,2.4));
+  return {lines,occ:[poly]};
+}
+
+// an armoured turret: a drum with gun ports and barrels pointing fore or aft
+function turret(c,w,ht,F,dir){
+  let r = ht*0.35;
+  let poly = [[c[0]-w/2,c[1]],[c[0]-w/2,c[1]-ht+r],[c[0]-w/2+r,c[1]-ht],[c[0]+w/2-r,c[1]-ht],[c[0]+w/2,c[1]-ht+r],[c[0]+w/2,c[1]]];
+  let lines = [poly.concat([poly[0]])];
+  // rounded shading toward the after side, and plating seams
+  for (let x = c[0]+w*0.12; x < c[0]+w/2; x += 1.6) lines.push([[x,c[1]-ht+r*0.5],[x,c[1]]]);
+  lines.push([[c[0]-w/2,c[1]-ht*0.45],[c[0]+w/2,c[1]-ht*0.45]]);
+  let gx = dir < 0 ? c[0]-w/2 : c[0]+w/2;
+  let gy = c[1]-ht*0.55;
+  let barrel = spar([gx,gy],[gx+dir*F*1.8,gy-F*0.05],F*0.09);
+  return {lines:clip_multi(lines.slice(1),poly).true.concat([lines[0]],barrel.lines),occ:[poly,...barrel.occ]};
+}
+
+// an armoured casemate: a box with sloping ends and a row of gun ports
+function casemate(x0,x1,y1,ht,F){
+  let poly = [[x0,y1],[x0+ht*0.7,y1-ht],[x1-ht*0.7,y1-ht],[x1,y1]];
+  let lines = [];
+  for (let x = x0-ht*0.2; x < x1; x += 2.2) lines.push([[x-0.7,y1+1],[x+ht*0.7+0.7,y1-ht-1]]);
+  lines = clip_multi(lines,poly.concat([poly[0]])).true;
+  let ports = [];
+  for (let x = x0+ht*1.1; x < x1-ht*1.1; x += F*0.9){
+    let p = [[x,y1-ht*0.65],[x+F*0.28,y1-ht*0.65],[x+F*0.28,y1-ht*0.35],[x,y1-ht*0.35]];
+    ports.push(p);
+  }
+  lines = clip_out(lines,ports);
+  for (let p of ports) lines.push(p.concat([p[0]]),...fill_shape(p,0.8));
+  lines.push(poly.concat([poly[0]]));
+  return {lines,occ:[poly]};
+}
+
+// a thin pole mast with a crosstree (steam ships)
+function pole_mast(ctx,t,ht,rake){
+  let m = make_mast(ctx.h.deck(t),ht,rake,ctx.F*0.09);
+  ctx.layers.masts.push({lines:m.lines,occ:[m.poly]});
+  let c = m.at(0.82);
+  ctx.layers.rig.push([[c[0]-ctx.F*0.3,c[1]],[c[0]+ctx.F*0.3,c[1]]]);
+  return m;
+}
+
+
 // ---------------------------------------------------------------- the ship
 
-const SHIP_TYPES = ['square rigger','fore and aft','steamer','longship'];
+// the bowsprit and the dolphin striker under it; returns the tip
+function bowsprit(ctx,len,ang){
+  let {h,F} = ctx;
+  let bow_top = h.sheer[0];
+  let tip = [bow_top[0]-Math.cos(ang)*len,bow_top[1]-Math.sin(ang)*len];
+  let root = [bow_top[0]+F*0.6,bow_top[1]+F*0.15];
+  ctx.hull_extra.push(spar(root,tip,1.4));
+  let ds = lerp2d(...root,...tip,0.62);
+  let dsb = [ds[0],ds[1]+F*0.5];
+  ctx.layers.rig.push([ds,dsb],[dsb,tip],[dsb,h.bow[~~(h.bow.length*0.45)]]);
+  ctx.tip = tip;
+  return tip;
+}
+
+// a sailing rig from a plan: one entry per mast, fore to aft, each with its own kind of sail
+function sail_plan(ctx,plan){
+  let {h,L,F,arg,layers} = ctx;
+  let ms = plan.map(p=>make_mast(h.deck(p.t),arg.rig_height*L*p.h,p.rake === undefined ? arg.rake : p.rake,F*0.12*(p.w || 1)));
+  let gap = i=>{
+    let d = [];
+    if (i > 0) d.push(ms[i].base[0]-ms[i-1].base[0]);
+    if (i < ms.length-1) d.push(ms[i+1].base[0]-ms[i].base[0]);
+    return d.length ? Math.min(...d) : L*0.4;
+  };
+  for (let i = ms.length-1; i >= 0; i--){
+    let m = ms[i];
+    let p = plan[i];
+    let ys = [0.6];
+    if (p.kind == 'square'){
+      if (p.spanker){
+        let boom = h.xs-m.base[0]+F*0.6;
+        gaff_rig(m,Object.assign({},arg,{topsail:0,reefs:0}),boom,layers,false);
+        ys = square_rig({at:u=>m.at(0.7+u*0.3),aft:m.aft},arg,Math.max(1,p.tiers-1),gap(i)*0.45*p.h*arg.yard,layers).map(u=>0.7+u*0.3);
+      }else{
+        ys = square_rig(m,arg,p.tiers,gap(i)*0.58*p.h*arg.yard,layers);
+      }
+      for (let u of ys){
+        let c = m.at(u-0.03);
+        layers.rig.push([[c[0]-F*0.35,c[1]],[c[0]+F*0.35,c[1]]]);
+      }
+      layers.rig.push(...shrouds(h,m,ys[0]-0.02,4,F*0.9));
+    }else if (p.kind == 'gaff'){
+      let boom = i < ms.length-1 ? (ms[i+1].base[0]-m.base[0])*0.9 : (h.xs-m.base[0])*0.95;
+      gaff_rig(m,Object.assign({},arg,{topsail:p.topsail === undefined ? arg.topsail : p.topsail}),boom*(p.boom || 1),layers,p.bermuda);
+      layers.rig.push(...shrouds(h,m,0.62,3,F*0.5));
+    }else if (p.kind == 'lateen'){
+      lateen_rig(m,arg,arg.lateen_len*L*p.h,arg.lateen_angle,layers);
+      layers.rig.push(...shrouds(h,m,0.8,2,F*0.6));
+    }else if (p.kind == 'junk'){
+      junk_rig(m,arg,gap(i)*0.95*p.h,layers);
+    }
+    layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
+    if (i > 0 && p.kind != 'junk') layers.stays.push([m.head,ms[i-1].at(p.kind == 'square' ? 0.38 : 0.7)]);
+  }
+  if (plan[0].kind != 'junk'){
+    layers.stays.push([ms[0].head,ctx.tip || h.sheer[0]]);
+  }
+  let tall = ms.reduce((a,m)=>(m.head[1] < a.head[1] ? m : a),ms[0]);
+  layers.flags.push(flag(tall.head,F*arg.pennant,F*0.16,true,arg.sea_z));
+  return ms;
+}
+
+// what each kind of ship is made of: its parameters, and how it is built on its hull
+const KINDS = {
+
+  // a full-rigged ship: three masts of square sails, often a spanker aft; HMS ships carry two
+  // decks of guns
+  ship:{
+    params(arg){
+      arg.hull_length = rndtri(240,300,360);
+      arg.freeboard = arg.hull_length*rndtri(0.07,0.085,0.1);
+      arg.masts = arg.warship ? 3 : choice([1,2,3],[1,2,4]);
+      arg.tiers = arg.masts == 1 ? choice([2,3]) : choice([2,3,4],[2,4,2]);
+      arg.rig_height = rndtri(0.6,0.75,0.9)*(arg.masts == 1 ? 1.1 : 1);
+      arg.sheer = rndtri(0.6,1,1.5);
+      arg.bow_rise = rndtri(0.3,0.6,0.9);
+      arg.stern_rise = rndtri(0.5,0.9,1.4);
+      arg.bow_rake = rndtri(0.6,1,1.6);
+      arg.bow_curve = rndtri(0,0.3,0.6);
+      arg.stern_overhang = rndtri(0.2,0.6,1);
+      arg.transom = choice([0,1]);
+      arg.hull_tone = rndtri(0.35,0.6,0.85);
+      arg.ports = arg.warship ? 1 : choice([0,1]);
+      arg.furl = rndtri(0,0.3,0.8);
+      arg.reefs = choice([0,0,1,2]);
+      arg.spanker = choice([0,1],[1,3]);
+      arg.jibs = choice([1,2,3],[1,3,2]);
+      arg.bowsprit = rndtri(0.18,0.25,0.32);
+      arg.bowsprit_angle = rndtri(0.2,0.3,0.45);
+      arg.pennant = rndtri(1,2,3.5);
+      arg.yard = rndtri(0.85,1,1.15);
+    },
+    build(ctx){
+      let {h,L,arg} = ctx;
+      let rows = arg.warship ? [0.13,0.27] : (arg.ports ? [0.16] : []);
+      ctx.dark = k=>{
+        for (let r of rows) if (Math.abs(k-r) < 0.055) return 0;
+        return k < 0.025 ? 0 : 1;
+      };
+      for (let r of rows) ctx.holes.push(gunports(h,r,ctx.F*0.13,0.12,0.88,0.05));
+      ctx.holes.push(stern_windows(h,2,3));
+      ctx.rail = 0.18;
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let n = arg.masts;
+      let ts = n == 3 ? [0.2,0.47,0.74] : n == 2 ? [0.28,0.62] : [0.42];
+      let hs = n == 3 ? [0.93,1,0.8] : n == 2 ? [0.95,1] : [1];
+      let ms = sail_plan(ctx,ts.map((t,i)=>({t,h:hs[i],kind:'square',tiers:Math.max(1,arg.tiers-(i == 2 ? 1 : 0)),spanker:arg.spanker && n > 1 && i == n-1})));
+      jibs(ms[0],lerp2d(...h.sheer[0],...tip,0.15),tip,arg.jibs,arg,ctx.layers);
+    },
+  },
+
+  // brigantine (two masts) or barquentine (three): square sails on the foremast only, gaff
+  // sails on the others
+  brig:{
+    params(arg){
+      KINDS.ship.params(arg);
+      arg.masts = choice([2,3],[3,2]);
+      arg.tiers = choice([2,3,4],[2,4,2]);
+      arg.topsail = choice([0,1],[1,2]);
+      arg.gaff_angle = rndtri(0.45,0.6,0.8);
+      arg.ports = choice([0,1],[3,1]);
+    },
+    build(ctx){
+      let {h,L,arg} = ctx;
+      ctx.dark = k=>(k < 0.025 ? 0 : 1);
+      if (arg.ports) ctx.holes.push(gunports(h,0.16,ctx.F*0.12,0.15,0.85,0.06));
+      ctx.holes.push(stern_windows(h,1,3));
+      ctx.rail = 0.15;
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let plan = arg.masts == 2
+        ? [{t:0.3,h:0.95,kind:'square',tiers:arg.tiers},{t:0.6,h:1,kind:'gaff'}]
+        : [{t:0.22,h:0.95,kind:'square',tiers:arg.tiers},{t:0.5,h:1,kind:'gaff'},{t:0.76,h:0.9,kind:'gaff'}];
+      let ms = sail_plan(ctx,plan);
+      jibs(ms[0],lerp2d(...h.sheer[0],...tip,0.15),tip,arg.jibs,arg,ctx.layers);
+    },
+  },
+
+  // a clipper: a long sharp hull with a hollow bow, and a towering rig of many square sails
+  clipper:{
+    params(arg){
+      KINDS.ship.params(arg);
+      arg.hull_length = rndtri(300,340,380);
+      arg.freeboard = arg.hull_length*rndtri(0.06,0.07,0.08);
+      arg.masts = 3;
+      arg.tiers = choice([4,5],[2,1]);
+      arg.rig_height = rndtri(0.85,0.95,1.05);
+      arg.sheer = rndtri(0.5,0.8,1.1);
+      arg.bow_rake = rndtri(1.8,2.4,3);
+      arg.bow_curve = rndtri(0.5,0.8,1.1);
+      arg.stern_overhang = rndtri(0.6,0.9,1.2);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.7,0.85,0.95);
+      arg.ports = 0;
+      arg.furl = rndtri(0,0.15,0.4);
+      arg.spanker = 1;
+      arg.jibs = 3;
+      arg.bowsprit = rndtri(0.25,0.3,0.36);
+      arg.yard = rndtri(0.9,1,1.1);
+    },
+    build(ctx){
+      let {h,L,arg} = ctx;
+      ctx.dark = k=>(k < 0.03 ? 0 : 1);
+      ctx.rail = 0.12;
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let ms = sail_plan(ctx,[
+        {t:0.22,h:0.94,kind:'square',tiers:arg.tiers},
+        {t:0.48,h:1,kind:'square',tiers:arg.tiers},
+        {t:0.73,h:0.86,kind:'square',tiers:arg.tiers-1,spanker:1},
+      ]);
+      jibs(ms[0],lerp2d(...h.sheer[0],...tip,0.15),tip,arg.jibs,arg,ctx.layers);
+    },
+  },
+
+  // a galleon: castles fore and aft, a row of guns, square sails forward and lateens aft,
+  // and a spritsail under the steep bowsprit
+  galleon:{
+    params(arg){
+      KINDS.ship.params(arg);
+      arg.hull_length = rndtri(240,270,300);
+      arg.freeboard = arg.hull_length*rndtri(0.09,0.1,0.11);
+      arg.masts = choice([3,4],[3,1]);
+      arg.tiers = choice([2,3],[2,1]);
+      arg.rig_height = rndtri(0.6,0.7,0.8);
+      arg.sheer = rndtri(1,1.3,1.6);
+      arg.sheer_pow = rndtri(1.6,2,2.4);
+      arg.bow_rise = rndtri(0.4,0.6,0.8);
+      arg.stern_rise = rndtri(1.2,1.6,2);
+      arg.bow_rake = rndtri(1.4,1.8,2.2);
+      arg.stern_overhang = rndtri(0.1,0.3,0.5);
+      arg.transom = 1;
+      arg.hull_tone = rndtri(0.45,0.6,0.8);
+      arg.bowsprit = rndtri(0.2,0.24,0.28);
+      arg.bowsprit_angle = rndtri(0.45,0.55,0.65);
+      arg.lateen_len = rndtri(0.32,0.38,0.44);
+      arg.lateen_angle = rndtri(0.5,0.6,0.7);
+      arg.castle = rndtri(0.9,1.1,1.4);
+      arg.furl = rndtri(0,0.2,0.5);
+    },
+    build(ctx){
+      let {h,L,F,arg} = ctx;
+      ctx.dark = k=>(Math.abs(k-0.17) < 0.05 ? 0 : 1);
+      ctx.holes.push(gunports(h,0.17,F*0.13,0.18,0.72,0.055));
+      ctx.rail = 0.15;
+      ctx.behind.push(castle(h,0.8,1,0,F*arg.castle,arg.hull_tone),castle(h,0.9,1,F*arg.castle,F*arg.castle*0.7,arg.hull_tone),castle(h,0,0.12,0,F*0.8,arg.hull_tone));
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let plan = [{t:0.25,h:0.85,kind:'square',tiers:arg.tiers},{t:0.5,h:1,kind:'square',tiers:arg.tiers+1},{t:0.72,h:0.75,kind:'lateen'}];
+      if (arg.masts == 4) plan.push({t:0.86,h:0.6,kind:'lateen'});
+      sail_plan(ctx,plan);
+      spritsail(h.sheer[0],tip,L*0.12,F*1.6,arg,ctx.layers);
+    },
+  },
+
+  // schooner, sloop or ketch: fore-and-aft sails, gaff or triangular, with headsails
+  schooner:{
+    params(arg){
+      arg.hull_length = rndtri(200,260,320);
+      arg.freeboard = arg.hull_length*rndtri(0.06,0.075,0.09);
+      arg.masts = choice([1,2],[2,3]);
+      arg.ketch = arg.masts == 2 ? choice([0,1],[3,1]) : 0;
+      arg.rig_height = rndtri(0.55,0.7,0.9)*(arg.masts == 1 ? 1.15 : 1);
+      arg.sheer = rndtri(0.4,0.8,1.2);
+      arg.bow_rise = rndtri(0.4,0.7,1);
+      arg.stern_rise = rndtri(0.2,0.5,0.8);
+      arg.bow_rake = rndtri(0.4,1,1.8);
+      arg.bow_curve = rndtri(0,0.3,0.6);
+      arg.stern_overhang = rndtri(0.3,0.9,1.6);
+      arg.transom = choice([0,1],[3,2]);
+      arg.hull_tone = rndtri(0.2,0.45,0.8);
+      arg.ports = choice([0,1],[3,1]);
+      arg.gaff_angle = rndtri(0.45,0.6,0.8);
+      arg.bermuda = choice([0,1],[4,1]);
+      arg.topsail = arg.bermuda ? 0 : choice([0,1]);
+      arg.reefs = choice([0,0,1]);
+      arg.jibs = choice([1,2,3],[2,3,1]);
+      arg.bowsprit = rndtri(0.1,0.18,0.25);
+      arg.bowsprit_angle = rndtri(0.1,0.2,0.3);
+      arg.pennant = rndtri(1,1.8,3);
+    },
+    build(ctx){
+      let {h,L,F,arg} = ctx;
+      ctx.dark = k=>(k < 0.2 ? 0.45 : 1);
+      if (arg.ports) ctx.holes.push(portholes(h,0.12,F*0.07,0.2,0.75,0.08));
+      ctx.rail = 0.1;
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let plan = arg.masts == 2
+        ? [{t:0.3,h:arg.ketch ? 1 : 0.92,kind:'gaff',bermuda:arg.bermuda},{t:0.6,h:arg.ketch ? 0.75 : 1,kind:'gaff',bermuda:arg.bermuda}]
+        : [{t:0.38,h:1,kind:'gaff',bermuda:arg.bermuda}];
+      let ms = sail_plan(ctx,plan);
+      jibs(ms[0],lerp2d(...h.sheer[0],...tip,0.1),tip,arg.jibs,arg,ctx.layers);
+    },
+  },
+
+  // a cutter: one tall mast well aft, a big gaff mainsail with a topsail, and a long bowsprit
+  // carrying several headsails
+  cutter:{
+    params(arg){
+      KINDS.schooner.params(arg);
+      arg.masts = 1;
+      arg.bermuda = 0;
+      arg.topsail = choice([0,1],[1,3]);
+      arg.rig_height = rndtri(0.7,0.85,1);
+      arg.jibs = choice([2,3],[2,1]);
+      arg.bowsprit = rndtri(0.25,0.32,0.4);
+      arg.bowsprit_angle = rndtri(0.02,0.08,0.15);
+      arg.bow_rake = rndtri(0,0.3,0.7);
+      arg.transom = choice([0,1],[2,1]);
+    },
+    build(ctx){
+      let {h,L,arg} = ctx;
+      ctx.dark = k=>(k < 0.2 ? 0.45 : 1);
+      ctx.rail = 0.08;
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let ms = sail_plan(ctx,[{t:0.45,h:1,kind:'gaff',boom:1.05}]);
+      jibs(ms[0],lerp2d(...h.sheer[0],...tip,0.05),tip,arg.jibs,arg,ctx.layers);
+    },
+  },
+
+  // felucca or dhow: lateen sails on masts raked forward, a low hull with a long overhanging
+  // bow and a raised stern
+  lateen:{
+    params(arg){
+      arg.hull_length = rndtri(200,240,280);
+      arg.freeboard = arg.hull_length*rndtri(0.06,0.07,0.08);
+      arg.masts = choice([1,2],[3,2]);
+      arg.sheer = rndtri(0.8,1.2,1.6);
+      arg.bow_rise = rndtri(0.6,0.9,1.2);
+      arg.stern_rise = rndtri(0.6,1,1.4);
+      arg.bow_rake = rndtri(2,2.8,3.6);
+      arg.bow_curve = rndtri(0.2,0.5,0.8);
+      arg.stern_overhang = rndtri(0.2,0.5,0.8);
+      arg.transom = 1;
+      arg.hull_tone = rndtri(0.3,0.5,0.7);
+      arg.rig_height = rndtri(0.45,0.55,0.65);
+      arg.rake = -rndtri(0.08,0.15,0.25);
+      arg.lateen_len = rndtri(0.75,0.9,1.05);
+      arg.lateen_angle = rndtri(0.38,0.5,0.62);
+      arg.pennant = rndtri(1.5,2.5,3.5);
+    },
+    build(ctx){
+      let {arg} = ctx;
+      ctx.dark = k=>(k < 0.08 ? 0 : 1);
+      ctx.rail = 0;
+      ctx.ensign = false;
+      let plan = arg.masts == 2
+        ? [{t:0.3,h:1,kind:'lateen'},{t:0.66,h:0.7,kind:'lateen'}]
+        : [{t:0.38,h:1,kind:'lateen'}];
+      sail_plan(ctx,plan);
+    },
+  },
+
+  // a junk: battened sails on unstayed masts, a high square stern, a flat raked bow and an eye
+  junk:{
+    params(arg){
+      arg.hull_length = rndtri(220,260,300);
+      arg.freeboard = arg.hull_length*rndtri(0.07,0.08,0.09);
+      arg.masts = choice([2,3],[2,3]);
+      arg.sheer = rndtri(1,1.4,1.8);
+      arg.sheer_pow = rndtri(1.8,2.2,2.6);
+      arg.bow_rise = rndtri(0.5,0.7,0.9);
+      arg.stern_rise = rndtri(1.3,1.7,2.1);
+      arg.bow_rake = rndtri(1.6,2,2.4);
+      arg.bow_curve = rndtri(-0.2,0,0.2);
+      arg.stern_overhang = rndtri(0.8,1.1,1.4);
+      arg.transom = 1;
+      arg.hull_tone = rndtri(0.5,0.65,0.8);
+      arg.rig_height = rndtri(0.6,0.7,0.8);
+      arg.rake = rndtri(-0.06,0,0.06);
+      arg.battens = choice([5,6,7]);
+      arg.pennant = rndtri(1.5,2.5,3.5);
+    },
+    build(ctx){
+      let {h,F,arg} = ctx;
+      ctx.dark = k=>(Math.abs(k-0.1) < 0.025 ? 0 : 1);
+      ctx.rail = 0.1;
+      ctx.ensign = false;
+      ctx.front.push(bow_eye(h));
+      ctx.behind.push(castle(h,0.82,1,0,F*0.9,arg.hull_tone));
+      let plan = arg.masts == 3
+        ? [{t:0.12,h:0.7,kind:'junk',rake:-0.15},{t:0.42,h:1,kind:'junk'},{t:0.72,h:0.75,kind:'junk'}]
+        : [{t:0.25,h:0.85,kind:'junk',rake:-0.08},{t:0.6,h:1,kind:'junk'}];
+      sail_plan(ctx,plan);
+    },
+  },
+
+  // a longship: curling stem and stern posts, shields along the side, oars, one striped sail
+  longship:{
+    params(arg){
+      arg.hull_length = rndtri(260,300,340);
+      arg.freeboard = arg.hull_length*rndtri(0.032,0.038,0.045);
+      arg.sheer = rndtri(4,5,6);
+      arg.sheer_pow = rndtri(3,3.6,4.4);
+      arg.bow_rise = rndtri(0.9,1,1.1);
+      arg.stern_rise = rndtri(0.85,0.95,1.05);
+      arg.bow_rake = rndtri(2.2,3,3.8);
+      arg.bow_curve = rndtri(0.6,1,1.4);
+      arg.stern_overhang = rndtri(2,2.8,3.6);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.55,0.65,0.75);
+      arg.post_len = rndtri(7,9,11.5);
+      arg.post_curl = rndtri(3.8,4.5,5.2);
+      arg.oars = choice([0,1],[1,3]);
+      arg.oar_angle = rndtri(0.4,0.7,1);
+      arg.rig_height = rndtri(0.32,0.4,0.48);
+      arg.sail_width = rndtri(0.8,1,1.2);
+      arg.stripes = choice([0,6,8,10],[1,2,2,1]);
+    },
+    build(ctx){
+      let {h,L,F,arg,layers} = ctx;
+      ctx.ensign = false;
+      let tan = (a,b)=>Math.atan2(a[1]-b[1],a[0]-b[0]);
+      let bp = curl_post(h.sheer[0],tan(h.bow[0],h.bow[3]),F*arg.post_len,arg.post_curl,F*0.42);
+      let sp = curl_post(h.sheer[h.sheer.length-1],tan(h.stern[0],h.stern[3]),F*arg.post_len*0.9,-arg.post_curl,F*0.42);
+      ctx.hull_extra.push(bp,sp);
+      let r = F*0.6;
+      let sh = {lines:[],occ:[]};
+      let k = 0;
+      for (let t = 0.2; t <= 0.8; t += r*1.7/L, k++){
+        let [x,y] = h.deck(t);
+        let s = shield([x,y+r*0.45],r,k);
+        sh.lines.push(...clip_out(s.lines,sh.occ));
+        sh.occ.push(...s.occ);
+      }
+      ctx.front.push(sh);
+      if (arg.oars) ctx.front.unshift(oar_bank(h,0.22,0.78,r*3.4/L,r*1.3,F*4,arg.oar_angle,r*0.85));
+      let so = h.deck(0.88);
+      ctx.hull_extra.push(spar([so[0]-F*0.2,so[1]-F*0.4],[so[0]+F*0.9,YW+F*1.5],1.6));
+      single_square(ctx,0.5,arg.rig_height*L,L*0.22*arg.sail_width,arg.stripes);
+      layers.stays.push([layers.masts[layers.masts.length-1].head,bp.path[~~(bp.path.length*0.25)]],[layers.masts[layers.masts.length-1].head,sp.path[~~(sp.path.length*0.25)]]);
+    },
+  },
+
+  // a galley: a long low hull with a ram, two banks of oars, one square sail and a curling stern
+  galley:{
+    params(arg){
+      arg.hull_length = rndtri(280,320,360);
+      arg.freeboard = arg.hull_length*rndtri(0.065,0.075,0.085);
+      arg.sheer = rndtri(1,1.5,2);
+      arg.sheer_pow = rndtri(2.6,3.2,3.8);
+      arg.bow_rise = rndtri(0.4,0.6,0.8);
+      arg.stern_rise = rndtri(1,1.3,1.6);
+      arg.bow_rake = rndtri(-0.4,0,0.4);
+      arg.bow_curve = rndtri(-0.3,0,0.3);
+      arg.stern_overhang = rndtri(1.4,2,2.6);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.5,0.65,0.8);
+      arg.post_len = rndtri(4,5,6.5);
+      arg.post_curl = rndtri(2.6,3.2,3.8);
+      arg.oar_angle = rndtri(0.85,1,1.15);
+      arg.rig_height = rndtri(0.32,0.38,0.44);
+      arg.sail_width = rndtri(0.7,0.85,1);
+      arg.stripes = choice([0,0,6,8]);
+      arg.furl = choice([0,1],[3,1]);
+    },
+    build(ctx){
+      let {h,L,F,arg,layers} = ctx;
+      ctx.ensign = false;
+      ctx.dark = k=>((Math.abs(k-0.08) < 0.03 || Math.abs(k-0.17) < 0.03) ? 0 : 1);
+      ctx.front.push(bow_eye(h));
+      // the ram: a bronze spur at the waterline, ahead of the stem
+      let b = h.bow[~~(h.bow.length*0.6)];
+      let ram = [[b[0]+F*0.3,YW-F*0.35],[b[0]-F*1.6,YW-F*0.02],[b[0]+F*0.3,YW+F*0.4]];
+      ctx.hull_extra.push({lines:[ram.concat([ram[0]]),[[b[0]-F*1.2,YW-F*0.08],[b[0]+F*0.3,YW-F*0.15]],...fill_shape(ram,2)],occ:[ram]});
+      let sp = curl_post(h.sheer[h.sheer.length-1],-PI/2+0.7,F*arg.post_len,-arg.post_curl,F*0.32);
+      ctx.hull_extra.push(sp);
+      let step = F*0.75/L;
+      ctx.front.unshift(oar_bank(h,0.16,0.84,step,F*0.22,F*4.2,arg.oar_angle,0));
+      ctx.front.unshift(oar_bank(h,0.17,0.85,step,F*0.48,F*3.6,arg.oar_angle-0.08,0));
+      single_square(ctx,0.45,arg.rig_height*L,L*0.18*arg.sail_width,arg.stripes,arg.furl);
+      let m = layers.masts[layers.masts.length-1];
+      layers.stays.push([m.head,h.sheer[0]],[m.head,h.sheer[h.sheer.length-1]]);
+    },
+  },
+
+  // a steamer: stacked decks, funnels and smoke, lifeboats, two pole masts
+  steamer:{
+    params(arg){
+      arg.hull_length = rndtri(300,360,420);
+      arg.freeboard = arg.hull_length*rndtri(0.07,0.085,0.1);
+      arg.sheer = rndtri(0.2,0.4,0.7);
+      arg.bow_rise = rndtri(0.5,0.8,1);
+      arg.stern_rise = rndtri(0.2,0.4,0.6);
+      arg.bow_rake = rndtri(0,0.3,0.8);
+      arg.bow_curve = rndtri(0,0.1,0.3);
+      arg.stern_overhang = rndtri(0.4,0.8,1.2);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.6,0.8,0.95);
+      arg.decks = choice([1,2,3],[1,3,2]);
+      arg.deck_height = rndtri(0.75,0.9,1.1);
+      arg.super_from = rndtri(0.22,0.3,0.38);
+      arg.super_to = rndtri(0.65,0.75,0.82);
+      arg.super_step = rndtri(0.02,0.05,0.08);
+      arg.funnels = choice([1,2,3,4],[3,3,2,1]);
+      arg.funnel_w = rndtri(0.75,0.95,1.2);
+      arg.funnel_h = rndtri(2.2,2.8,3.6);
+      arg.funnel_rake = rndtri(0,0.1,0.2);
+      arg.funnel_band = choice([0,1]);
+      arg.smoke = choice([0,4,6,8],[1,2,2,1]);
+      arg.mast_h = rndtri(2.6,3.4,4.2);
+    },
+    build(ctx){
+      let {h,F,arg,layers} = ctx;
+      ctx.dark = k=>(k < 0.07 ? 0 : 1);
+      ctx.holes.push(portholes(h,0.15,F*0.055,0.1,0.9,0.022));
+      if (arg.decks > 1) ctx.holes.push(portholes(h,0.04,F*0.05,0.25,0.78,0.022));
+      ctx.rail = 0.12;
+      let tiers = deck_tiers(ctx,arg.super_from,arg.super_to,arg.decks,arg.super_step,arg.deck_height);
+      let tt = tiers[tiers.length-1];
+      let bw = F*1.3;
+      let bridge = deckhouse(tt.x0,tt.x0+bw,tt.y0-F*0.7,tt.y0+1,F,{pitch:0.22,win:0.12,ht:0.7,rail:false});
+      ctx.behind.unshift(bridge);
+      let bd = tiers[Math.min(1,tiers.length-1)];
+      ctx.behind.unshift(davit_boats(bd.x0+F*1.6,bd.x1-F*1.4,bd.y0,F));
+      let fx0 = tt.x0+bw+F*0.6;
+      let fx1 = tt.x1-F*0.6;
+      for (let i = 0; i < arg.funnels; i++){
+        let x = arg.funnels == 1 ? (fx0+fx1)/2 : lerp(fx0,fx1,i/(arg.funnels-1));
+        add_funnel(ctx,[x,tt.y0+F*0.3],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,arg.funnel_band,arg.smoke,i);
+      }
+      let fm = pole_mast(ctx,0.08,F*arg.mast_h,arg.rake);
+      let mm = pole_mast(ctx,0.9,F*arg.mast_h*0.95,arg.rake);
+      layers.stays.push([h.sheer[0],fm.head],[fm.head,mm.head],[mm.head,h.sheer[h.sheer.length-1]]);
+      layers.flags.push(flag(fm.head,F*0.9,F*0.12,true,arg.sea_z));
+    },
+  },
+
+  // a tug: a short deep hull with a high bow, a wheelhouse, one big funnel, fenders all round
+  tug:{
+    params(arg){
+      arg.hull_length = rndtri(170,200,230);
+      arg.freeboard = arg.hull_length*rndtri(0.11,0.125,0.14);
+      arg.sheer = rndtri(0.5,0.8,1.1);
+      arg.bow_rise = rndtri(0.8,1,1.2);
+      arg.stern_rise = rndtri(0,0.15,0.3);
+      arg.bow_rake = rndtri(0,0.25,0.5);
+      arg.bow_curve = rndtri(0,0.1,0.2);
+      arg.stern_overhang = rndtri(0.3,0.5,0.7);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.6,0.75,0.9);
+      arg.funnel_w = rndtri(0.75,0.9,1.05);
+      arg.funnel_h = rndtri(1.7,2.1,2.5);
+      arg.funnel_rake = rndtri(0,0.06,0.12);
+      arg.funnel_band = choice([0,1]);
+      arg.smoke = choice([0,4,6],[1,2,2]);
+      arg.mast_h = rndtri(2.2,2.8,3.4);
+    },
+    build(ctx){
+      let {h,F,arg,layers} = ctx;
+      ctx.dark = k=>(k < 0.05 ? 0 : 1);
+      ctx.holes.push(portholes(h,0.12,F*0.06,0.15,0.6,0.07));
+      ctx.rail = 0.1;
+      ctx.front.push(fenders(h,0.12,0.88,0.09));
+      // a thick rope fender over the stem
+      let bf = h.bow.slice(0,~~(h.bow.length*0.4));
+      let [l,r] = tube(resample(bf,1.5),u=>F*0.12);
+      ctx.front.push({lines:[l,r,...l.filter((p,i)=>i%3 == 0).map((p,i)=>[p,r[i*3]])],occ:[l.concat(r.slice().reverse())]});
+      let [x0,y0] = h.deck(0.3);
+      let x1 = h.deck(0.68)[0];
+      let house = deckhouse(x0,x1,y0-F*0.75,y0+F*0.4,F,{round:true,pitch:0.3});
+      let wx = x0+F*0.2;
+      let wheel = deckhouse(wx,wx+F*1.5,y0-F*1.7,y0-F*0.74,F,{win:0.22,pitch:0.34,ht:0.9});
+      ctx.behind.push(wheel,house);
+      add_funnel(ctx,[wx+F*2.4,y0-F*0.6],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,arg.funnel_band,arg.smoke,0);
+      // the towing hook aft
+      let [tx,ty] = h.deck(0.84);
+      layers.rig.push(bezier3([tx-F*0.4,ty],[tx-F*0.4,ty-F*0.6],[tx+F*0.4,ty-F*0.6],[tx+F*0.4,ty],10),[[tx,ty-F*0.45],[tx+F*0.15,ty-F*0.2]]);
+      let fm = pole_mast(ctx,0.22,F*arg.mast_h,arg.rake);
+      layers.stays.push([h.sheer[0],fm.head],[fm.head,h.deck(0.5)]);
+    },
+  },
+
+  // a steam yacht: a slim dark hull with a clipper bow and bowsprit, one raked funnel and two
+  // raked masts with small sails
+  yacht:{
+    params(arg){
+      arg.hull_length = rndtri(260,300,340);
+      arg.freeboard = arg.hull_length*rndtri(0.055,0.065,0.075);
+      arg.sheer = rndtri(0.4,0.6,0.8);
+      arg.bow_rise = rndtri(0.7,0.9,1.1);
+      arg.stern_rise = rndtri(0.2,0.35,0.5);
+      arg.bow_rake = rndtri(1.6,2.2,2.8);
+      arg.bow_curve = rndtri(0.4,0.6,0.8);
+      arg.stern_overhang = rndtri(1,1.4,1.8);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.8,0.9,1);
+      arg.rake = rndtri(0.1,0.15,0.2);
+      arg.rig_height = rndtri(0.32,0.38,0.44);
+      arg.gaff_angle = rndtri(0.5,0.6,0.7);
+      arg.topsail = 0;
+      arg.funnel_w = rndtri(0.5,0.6,0.7);
+      arg.funnel_h = rndtri(1.4,1.8,2.2);
+      arg.funnel_rake = rndtri(0.12,0.18,0.24);
+      arg.smoke = choice([0,4],[2,1]);
+      arg.bowsprit = rndtri(0.08,0.11,0.14);
+      arg.bowsprit_angle = rndtri(0.15,0.22,0.3);
+      arg.jibs = 1;
+      arg.sails_set = choice([0,1]);
+    },
+    build(ctx){
+      let {h,L,F,arg,layers} = ctx;
+      ctx.dark = k=>(k < 0.05 ? 0 : Math.abs(k-0.09) < 0.012 ? 0 : 1);
+      ctx.holes.push(portholes(h,0.15,F*0.06,0.2,0.75,0.05));
+      ctx.rail = 0.1;
+      let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
+      let [x0,y0] = h.deck(0.3);
+      let x1 = h.deck(0.74)[0];
+      ctx.behind.push(deckhouse(x0,x1,y0-F*0.6,y0+F*0.4,F,{pitch:0.3}));
+      ctx.behind.unshift(davit_boats(x0+F*1.2,x1-F*1.8,y0-F*0.6,F));
+      add_funnel(ctx,[(x0+x1)/2,y0-F*0.4],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,1,arg.smoke,0);
+      if (arg.sails_set){
+        let ms = sail_plan(ctx,[{t:0.2,h:1,kind:'gaff',boom:0.55},{t:0.82,h:0.92,kind:'gaff',boom:1}]);
+        jibs(ms[0],lerp2d(...h.sheer[0],...tip,0.1),tip,1,arg,layers);
+      }else{
+        for (let [t,hh] of [[0.2,1],[0.82,0.92]]){
+          let m = make_mast(h.deck(t),arg.rig_height*L*hh,arg.rake,F*0.1);
+          layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
+          let tack = m.at(0.12);
+          layers.sails.push(furled(tack,[tack[0]+F*3,tack[1]-F*0.2]));
+          layers.rig.push(...shrouds(h,m,0.7,3,F*0.5));
+        }
+        layers.stays.push([layers.masts[0].head,tip],[layers.masts[0].head,layers.masts[1].head]);
+      }
+    },
+  },
+
+  // a paddle steamer: a big paddle box amidships, tall thin funnels and a walking beam
+  paddle:{
+    params(arg){
+      arg.hull_length = rndtri(280,320,360);
+      arg.freeboard = arg.hull_length*rndtri(0.06,0.07,0.08);
+      arg.sheer = rndtri(0.3,0.5,0.7);
+      arg.bow_rise = rndtri(0.5,0.7,0.9);
+      arg.stern_rise = rndtri(0.2,0.4,0.6);
+      arg.bow_rake = rndtri(0.2,0.6,1);
+      arg.bow_curve = rndtri(0,0.2,0.4);
+      arg.stern_overhang = rndtri(0.5,0.8,1.1);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.55,0.7,0.85);
+      arg.funnels = choice([1,2],[2,1]);
+      arg.funnel_w = rndtri(0.45,0.55,0.65);
+      arg.funnel_h = rndtri(3,3.6,4.2);
+      arg.funnel_rake = rndtri(0,0.04,0.1);
+      arg.smoke = choice([0,4,6,8],[1,2,2,1]);
+      arg.beam = choice([0,1]);
+      arg.box = rndtri(1.6,1.9,2.2);
+      arg.mast_h = rndtri(3,3.6,4.2);
+    },
+    build(ctx){
+      let {h,F,arg,layers} = ctx;
+      ctx.dark = k=>(k < 0.05 ? 0 : 1);
+      ctx.rail = 0.12;
+      let [px,py] = h.deck(0.48);
+      ctx.front.push(paddle_box([px,py+F*0.1],F*arg.box,F));
+      let [x0,y0] = h.deck(0.24);
+      let x1 = h.deck(0.8)[0];
+      ctx.behind.push(deckhouse(x0,x1,y0-F*0.7,y0+F*0.4,F,{pitch:0.26}));
+      let fxs = arg.funnels == 2 ? [px-F*1.6,px+F*1.6] : [px-F*(arg.beam ? 2 : 0)];
+      fxs.forEach((x,i)=>add_funnel(ctx,[x,y0-F*0.5],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,0,arg.smoke,i));
+      if (arg.beam){
+        // the walking beam on its A-frame, rocking above the deck
+        let apex = [px+F*(arg.funnels == 2 ? 0 : 0.6),y0-F*2.4];
+        let a = [apex[0]-F*2,apex[1]+F*0.3];
+        let b = [apex[0]+F*2,apex[1]-F*0.3];
+        let beam = [a,[apex[0],apex[1]-F*0.16],b,[apex[0],apex[1]+F*0.16],a];
+        let pivot = ellipse(...apex,F*0.1,F*0.1,0,10);
+        let frame = [[apex[0]-F*0.7,y0-F*0.7],apex,[apex[0]+F*0.7,y0-F*0.7]];
+        ctx.behind.unshift({lines:[beam,pivot,...clip_out([frame,[a,[a[0],y0-F*0.7]]],[beam.slice(0,4)])],occ:[beam.slice(0,4)]});
+      }
+      let fm = pole_mast(ctx,0.1,F*arg.mast_h,arg.rake);
+      layers.stays.push([h.sheer[0],fm.head],[fm.head,h.deck(0.4)]);
+      layers.flags.push(flag(fm.head,F*1.2,F*0.14,true,arg.sea_z));
+    },
+  },
+
+  // an ironclad: a low black armoured hull with a ram bow, a turret or a casemate, a short
+  // funnel and a pole mast
+  ironclad:{
+    params(arg){
+      arg.hull_length = rndtri(260,300,340);
+      arg.freeboard = arg.hull_length*rndtri(0.04,0.048,0.056);
+      arg.sheer = rndtri(0,0.15,0.3);
+      arg.bow_rise = rndtri(0.2,0.5,0.8);
+      arg.stern_rise = rndtri(0.2,0.4,0.6);
+      arg.bow_rake = -rndtri(0.8,1.2,1.6);
+      arg.bow_curve = -rndtri(0.2,0.4,0.6);
+      arg.stern_overhang = rndtri(0.2,0.5,0.8);
+      arg.transom = 0;
+      arg.hull_tone = rndtri(0.85,0.92,1);
+      arg.casemate = choice([0,1]);
+      arg.turrets = choice([1,2],[2,3]);
+      arg.funnel_w = rndtri(0.8,1,1.2);
+      arg.funnel_h = rndtri(1.4,1.8,2.2);
+      arg.funnel_rake = rndtri(0,0.05,0.1);
+      arg.smoke = choice([0,4,6],[1,2,2]);
+      arg.mast_h = rndtri(3,3.8,4.6);
+    },
+    build(ctx){
+      let {h,F,arg,layers} = ctx;
+      ctx.dark = k=>1;
+      ctx.rail = 0;
+      let deck = t=>h.deck(t)[1];
+      if (arg.casemate){
+        let x0 = h.deck(0.3)[0];
+        let x1 = h.deck(0.72)[0];
+        ctx.behind.push(casemate(x0,x1,deck(0.5)+2,F*1.3,F));
+        add_funnel(ctx,[(x0+x1)/2,deck(0.5)-F*1],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,0,arg.smoke,0);
+      }else{
+        let ts = arg.turrets == 2 ? [0.28,0.72] : [0.38];
+        for (let t of ts){
+          let [x,y] = h.deck(t);
+          ctx.behind.push(turret([x,y+1],F*3.2,F*1.7,F,t < 0.5 ? -1 : 1));
+        }
+        let fx = h.deck(arg.turrets == 2 ? 0.5 : 0.62)[0];
+        ctx.behind.push(deckhouse(fx-F*1.2,fx+F*1.2,deck(0.5)-F*0.5,deck(0.5)+2,F,{windows:false}));
+        add_funnel(ctx,[fx,deck(0.5)-F*0.4],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,0,arg.smoke,0);
+      }
+      let m = pole_mast(ctx,arg.casemate ? 0.2 : 0.5,F*arg.mast_h,0);
+      layers.stays.push([h.sheer[0],m.head],[m.head,h.sheer[h.sheer.length-1]]);
+      layers.flags.push(flag(m.head,F*1.4,F*0.16,true,arg.sea_z));
+    },
+  },
+};
+
+// shared pieces of the steam ships
+
+// stacked decks of a superstructure from t0 to t1, each one shorter than the one below
+function deck_tiers(ctx,a,b,n,step,dh){
+  let {h,F} = ctx;
+  let top = Math.min(...[a,b,(a+b)/2].map(t=>h.ysh(t)));
+  let tiers = [];
+  for (let i = 0; i < n; i++){
+    let ta = a+i*step;
+    let tb = b-i*step*0.6;
+    let x0 = lerp(h.xb,h.xs,ta);
+    let x1 = lerp(h.xb,h.xs,tb);
+    let y1 = i == 0 ? h.ysh((ta+tb)/2)+F*0.4 : tiers[i-1].y0+1;
+    let y0 = (i == 0 ? top : tiers[i-1].y0)-F*dh;
+    let d = deckhouse(x0,x1,y0,y1,F,{ht:dh});
+    tiers.push({x0,x1,y0,y1,d});
+  }
+  for (let i = tiers.length-1; i >= 0; i--) ctx.behind.push(tiers[i].d);
+  return tiers;
+}
+
+// lifeboats in davits along a deck from x0 to x1
+function davit_boats(x0,x1,y,F){
+  let boats = {lines:[],occ:[]};
+  for (let x = x0; x < x1; x += F*1.5){
+    let bt = boat(x,y-F*0.42,F*1.05,F*0.24);
+    boats.lines.push(...clip_out(bt.lines,boats.occ));
+    boats.occ.push(...bt.occ);
+    boats.lines.push(bezier3([x+F*0.1,y],[x+F*0.1,y-F*0.7],[x+F*0.3,y-F*0.7],[x+F*0.3,y-F*0.5],8));
+    boats.lines.push(bezier3([x+F*0.95,y],[x+F*0.95,y-F*0.7],[x+F*0.75,y-F*0.7],[x+F*0.75,y-F*0.5],8));
+  }
+  return boats;
+}
+
+// a funnel with its smoke
+function add_funnel(ctx,base,w,ht,rake,bands,smoke_n,i){
+  let f = funnel(base,w,ht,rake,bands);
+  ctx.behind.push(f);
+  if (smoke_n) ctx.layers.flags.push(smoke(f.top,w*0.45,smoke_n,ctx.arg.sea_z+i));
+}
+
+// a bank of oars from ports along the hull, reaching down into the water
+function oar_bank(h,t0,t1,step,depth,len,ang,dx){
+  let oars = {lines:[],occ:[]};
+  for (let t = t0; t <= t1; t += step){
+    let [x,y] = h.deck(t);
+    let p = [x+dx,y+depth];
+    let q = [p[0]-Math.sin(ang)*len,p[1]+Math.cos(ang)*len];
+    oars.lines.push(...spar(p,q,0.8).lines,ellipse(...p,1.2,1.2,0,8));
+  }
+  return oars;
+}
+
+// one square sail on a single mast amidships (longships, galleys), perhaps furled
+function single_square(ctx,t,ht,half,stripes,furl){
+  let {h,F,arg,layers} = ctx;
+  let m = make_mast(h.deck(t),ht,arg.rake,F*0.15);
+  let c = m.at(0.8);
+  let a = [c[0]-half,c[1]];
+  let b = [c[0]+half,c[1]];
+  layers.spars.push(spar(a,b,1.2));
+  if (furl){
+    layers.sails.push(furled(a,b));
+  }else{
+    let fc = m.at(0.12);
+    let BL = [fc[0]-half*1.05,fc[1]];
+    let BR = [fc[0]+half*1.05,fc[1]];
+    let hgt = dist(...a,...BL);
+    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.06,bulgeR:hgt*0.06,belly:hgt*0.08,shade:arg.sail_shade,stripes,seam:9}));
+  }
+  layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
+  layers.flags.push(flag(m.head,F*1.6,F*0.3,true,arg.sea_z));
+  return m;
+}
 
 function ship(arg){
   let h = hull_shape(arg);
   let L = h.L;
   let F = h.F;
-  let layers = {sails:[],spars:[],rig:[],stays:[],masts:[],front:[],flags:[]};
-  let hull_occ = [h.outline];
-  let hull_extra = [];
-  let deco = [];
-  let behind = [];
+  let ctx = {
+    h,L,F,arg,
+    layers:{sails:[],spars:[],rig:[],stays:[],masts:[],flags:[]},
+    hull_extra:[],
+    behind:[],
+    front:[],
+    holes:[],
+    dark:k=>1,
+    rail:0,
+    ensign:true,
+    tip:null,
+  };
+  KINDS[arg.kind].build(ctx);
+  let layers = ctx.layers;
 
-  // ---- hull tone, ports and windows
-  let dark;
-  let holes = [];
-  if (arg.type == 0){
-    let rows = arg.warship ? [0.13,0.27] : (arg.ports ? [0.16] : []);
-    dark = k=>{
-      for (let r of rows) if (Math.abs(k-r) < 0.055) return 0;
-      return k < 0.025 ? 0 : 1;
-    };
-    for (let r of rows) holes.push(gunports(h,r,F*0.13,0.12,0.88,0.05));
-    holes.push(stern_windows(h,2,3));
-  }else if (arg.type == 1){
-    dark = k=>(k < 0.2 ? 0.45 : 1);
-    if (arg.ports) holes.push(portholes(h,0.12,F*0.07,0.2,0.75,0.08));
-  }else if (arg.type == 2){
-    dark = k=>(k < 0.07 ? 0 : 1);
-    holes.push(portholes(h,0.15,F*0.055,0.1,0.9,0.022));
-    if (arg.decks > 1) holes.push(portholes(h,0.04,F*0.05,0.25,0.78,0.022));
-  }else{
-    dark = k=>1;
-  }
-  let planks = hull_lines(h,lerp(4.5,1.7,arg.hull_tone),dark,arg.sea_z+7);
-  for (let ho of holes){
+  // the hull: engraved tone, then ports and windows cut into it
+  let planks = hull_lines(h,lerp(4.5,1.7,arg.hull_tone),ctx.dark,arg.sea_z+7);
+  let deco = [];
+  for (let ho of ctx.holes){
     planks = clip_out(planks,ho.occ);
     deco.push(...ho.lines);
   }
-  let hull = {lines:[h.sheer,h.stern,h.bow,...planks,...deco],occ:hull_occ};
+  let hull = {lines:[h.sheer,h.stern,h.bow,...planks,...deco],occ:[h.outline]};
+  if (ctx.rail) hull.lines.push(...deck_rail(h,0.03,0.97,F*ctx.rail));
 
-  // ---- bowsprit
-  let bow_top = h.sheer[0];
-  let tip = null;
-  if (arg.type < 2){
-    let a = arg.bowsprit_angle;
-    let bl = arg.bowsprit*L;
-    tip = [bow_top[0]-Math.cos(a)*bl,bow_top[1]-Math.sin(a)*bl];
-    let root = [bow_top[0]+F*0.6,bow_top[1]+F*0.15];
-    hull_extra.push(spar(root,tip,1.4));
-    // the dolphin striker and its stays under the bowsprit
-    let ds = lerp2d(...root,...tip,0.62);
-    let dsb = [ds[0],ds[1]+F*0.5];
-    layers.rig.push([ds,dsb],[dsb,tip],[dsb,h.bow[~~(h.bow.length*0.45)]]);
-  }
-
-  // ---- rig
-  if (arg.type == 0){
-    let ts = arg.masts == 3 ? [0.2,0.47,0.74] : arg.masts == 2 ? [0.28,0.62] : [0.42];
-    let hs = arg.masts == 3 ? [0.93,1,0.8] : arg.masts == 2 ? [0.95,1] : [1];
-    let ms = ts.map((t,i)=>make_mast(h.deck(t),arg.rig_height*L*hs[i],arg.rake,F*0.12));
-    let spacing = arg.masts > 1 ? (ms[1].base[0]-ms[0].base[0]) : L*0.4;
-    for (let i = 0; i < ms.length; i++){
-      let m = ms[i];
-      let spanker = arg.spanker && i == ms.length-1 && ms.length > 1;
-      let tiers = Math.max(1,arg.tiers-(i == ms.length-1 && ms.length == 3 ? 1 : 0));
-      let ys;
-      if (spanker){
-        let boom = h.xs-m.base[0]+F*0.6;
-        gaff_rig(m,Object.assign({},arg,{topsail:0,reefs:0}),boom,layers,false);
-        ys = square_rig({at:u=>m.at(0.7+u*0.3),aft:m.aft},arg,Math.max(1,tiers-1),spacing*0.45*hs[i]*arg.yard,layers).map(u=>0.7+u*0.3);
-      }else{
-        ys = square_rig(m,arg,tiers,spacing*0.58*hs[i]*arg.yard,layers);
-      }
-      layers.rig.push(...shrouds(h,m,ys[0]-0.02,4,F*0.9));
-      layers.masts.push({lines:m.lines,occ:[m.poly]});
-      for (let u of ys){
-        let c = m.at(u-0.03);
-        layers.rig.push([[c[0]-F*0.35,c[1]],[c[0]+F*0.35,c[1]]]);
-      }
-      if (i > 0) layers.stays.push([m.head,ms[i-1].at(0.38)]);
-      layers.stays.push([m.head,h.deck(Math.min(0.99,h.tx(m.base[0])+0.18))]);
-    }
-    layers.stays.push([ms[0].head,tip]);
-    jibs(ms[0],lerp2d(...bow_top,...tip,0.15),tip,arg.jibs,arg,layers);
-    let main = ms[arg.masts == 1 ? 0 : 1];
-    layers.flags.push(flag(main.head,F*arg.pennant,F*0.16,true,arg.sea_z));
-  }else if (arg.type == 1){
-    let ts = arg.masts == 2 ? [0.3,0.6] : [0.38];
-    let hs = arg.masts == 2 ? (arg.ketch ? [1,0.75] : [0.92,1]) : [1];
-    let ms = ts.map((t,i)=>make_mast(h.deck(t),arg.rig_height*L*hs[i],arg.rake,F*0.11));
-    for (let i = ms.length-1; i >= 0; i--){
-      let m = ms[i];
-      let boom = i < ms.length-1 ? (ms[i+1].base[0]-m.base[0])*0.9 : (h.xs-m.base[0])*0.95;
-      gaff_rig(m,arg,boom,layers,arg.bermuda);
-      layers.rig.push(...shrouds(h,m,0.62,3,F*0.5));
-      layers.masts.push({lines:m.lines,occ:[m.poly]});
-      if (i > 0) layers.stays.push([m.head,ms[i-1].at(0.7)]);
-    }
-    layers.stays.push([ms[0].head,tip]);
-    jibs(ms[0],lerp2d(...bow_top,...tip,0.1),tip,arg.jibs,arg,layers);
-    layers.flags.push(flag(ms[ms.length-1].head,F*arg.pennant,F*0.14,true,arg.sea_z));
-  }else if (arg.type == 2){
-    // superstructure: stacked decks with windows and rails
-    let a = arg.super_from;
-    let b = arg.super_to;
-    let top = Math.min(...[a,b,(a+b)/2].map(t=>h.ysh(t)));
-    let tiers = [];
-    for (let i = 0; i < arg.decks; i++){
-      let ta = a+i*arg.super_step;
-      let tb = b-i*arg.super_step*0.6;
-      let x0 = lerp(h.xb,h.xs,ta);
-      let x1 = lerp(h.xb,h.xs,tb);
-      let y1 = i == 0 ? h.ysh((ta+tb)/2)+F*0.4 : tiers[i-1].y0+1;
-      let y0 = (i == 0 ? top : tiers[i-1].y0)-F*arg.deck_height;
-      let poly = [[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
-      let lines = [[[x0,y1],[x0,y0],[x1,y0],[x1,y1]]];
-      // shadow under the deck above, and a row of windows
-      for (let k = 1; k <= 3; k++) lines.push([[x0,y0+k*1.3],[x1,y0+k*1.3]]);
-      let ww = F*0.1;
-      let wy = lerp(y0,Math.min(y1,y0+F*arg.deck_height),0.55);
-      let wins = [];
-      for (let x = x0+F*0.3; x < x1-F*0.2; x += F*0.24){
-        let p = [[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7]];
-        wins.push(p);
-        lines.push(p.concat([p[0]]));
-      }
-      lines = clip_out(lines.slice(1),wins).concat([lines[0]]);
-      lines.push(...deck_rail({deck:t=>[lerp(x0,x1,t),y0],},0,1,F*0.12));
-      tiers.push({x0,x1,y0,y1,poly,lines});
-    }
-    for (let i = tiers.length-1; i >= 0; i--) behind.push({lines:tiers[i].lines,occ:[tiers[i].poly]});
-    let tt = tiers[tiers.length-1];
-    // the bridge at the front of the top deck
-    let bw = F*1.3;
-    let bridge = [[tt.x0,tt.y0-F*0.7],[tt.x0+bw,tt.y0-F*0.7],[tt.x0+bw,tt.y0+1],[tt.x0,tt.y0+1]];
-    let blines = [bridge.concat([bridge[0]])];
-    for (let x = tt.x0+F*0.15; x < tt.x0+bw-F*0.15; x += F*0.22){
-      blines.push([[x,tt.y0-F*0.55],[x+F*0.12,tt.y0-F*0.55],[x+F*0.12,tt.y0-F*0.35],[x,tt.y0-F*0.35],[x,tt.y0-F*0.55]]);
-    }
-    behind.unshift({lines:blines,occ:[bridge]});
-    // lifeboats in davits along the boat deck
-    let bd = tiers[Math.min(1,tiers.length-1)];
-    let boats = {lines:[],occ:[]};
-    for (let x = bd.x0+F*1.6; x < bd.x1-F*1.4; x += F*1.5){
-      let bt = boat(x,bd.y0-F*0.42,F*1.05,F*0.24);
-      boats.lines.push(...clip_out(bt.lines,boats.occ));
-      boats.occ.push(...bt.occ);
-      boats.lines.push(bezier3([x+F*0.1,bd.y0],[x+F*0.1,bd.y0-F*0.7],[x+F*0.3,bd.y0-F*0.7],[x+F*0.3,bd.y0-F*0.5],8));
-      boats.lines.push(bezier3([x+F*0.95,bd.y0],[x+F*0.95,bd.y0-F*0.7],[x+F*0.75,bd.y0-F*0.7],[x+F*0.75,bd.y0-F*0.5],8));
-    }
-    behind.unshift(boats);
-    // funnels and their smoke
-    let fx0 = tt.x0+bw+F*0.6;
-    let fx1 = tt.x1-F*0.6;
-    let fs = [];
-    for (let i = 0; i < arg.funnels; i++){
-      let x = arg.funnels == 1 ? (fx0+fx1)/2 : lerp(fx0,fx1,i/(arg.funnels-1));
-      fs.push(funnel([x,tt.y0+F*0.3],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,arg.funnel_band));
-    }
-    for (let f of fs) behind.push(f);
-    if (arg.smoke){
-      for (let f of fs) layers.flags.push(smoke(f.top,F*arg.funnel_w*0.45,arg.smoke,arg.sea_z+fs.indexOf(f)));
-    }
-    // masts with crosstrees, and the stays between them
-    let fm = make_mast(h.deck(0.08),F*arg.mast_h,arg.rake,F*0.09);
-    let mm = make_mast(h.deck(0.9),F*arg.mast_h*0.95,arg.rake,F*0.09);
-    for (let m of [fm,mm]){
-      layers.masts.push({lines:m.lines,occ:[m.poly]});
-      let c = m.at(0.82);
-      layers.rig.push([[c[0]-F*0.3,c[1]],[c[0]+F*0.3,c[1]]]);
-    }
-    layers.stays.push([bow_top,fm.head],[fm.head,mm.head],[mm.head,h.sheer[h.sheer.length-1]]);
-    layers.flags.push(flag(fm.head,F*0.9,F*0.12,true,arg.sea_z));
-  }else{
-    // longship: curling stem and stern posts, shields along the side, oars, one striped sail
-    // the posts carry on the line of the stem and the sternpost, then curl inward
-    let tan = (a,b)=>Math.atan2(a[1]-b[1],a[0]-b[0]);
-    let bp = curl_post(h.sheer[0],tan(h.bow[0],h.bow[3]),F*arg.post_len,arg.post_curl,F*0.42);
-    let sp = curl_post(h.sheer[h.sheer.length-1],tan(h.stern[0],h.stern[3]),F*arg.post_len*0.9,-arg.post_curl,F*0.42);
-    hull_extra.push(bp,sp);
-    let r = F*0.6;
-    let sh = {lines:[],occ:[]};
-    let k = 0;
-    for (let t = 0.2; t <= 0.8; t += r*1.7/L, k++){
-      let [x,y] = h.deck(t);
-      let s = shield([x,y+r*0.45],r,k);
-      sh.lines.push(...clip_out(s.lines,sh.occ));
-      sh.occ.push(...s.occ);
-    }
-    layers.front.push(sh);
-    if (arg.oars){
-      let oars = {lines:[],occ:[]};
-      for (let t = 0.22; t <= 0.78; t += r*3.4/L){
-        let [x,y] = h.deck(t);
-        let p = [x+r*0.85,y+r*1.3];
-        let q = [p[0]-Math.sin(arg.oar_angle)*F*4,p[1]+Math.cos(arg.oar_angle)*F*4];
-        let o = spar(p,q,0.8);
-        oars.lines.push(...o.lines);
-      }
-      layers.front.unshift(oars);
-    }
-    // the steering oar on the quarter
-    let so = h.deck(0.88);
-    hull_extra.push(spar([so[0]-F*0.2,so[1]-F*0.4],[so[0]+F*0.9,YW+F*1.5],1.6));
-    let m = make_mast(h.deck(0.5),arg.rig_height*L,arg.rake,F*0.15);
-    let ys = [0.8];
-    let half = L*0.22*arg.sail_width;
-    let c = m.at(ys[0]);
-    let a = [c[0]-half,c[1]];
-    let b = [c[0]+half,c[1]];
-    layers.spars.push(spar(a,b,1.2));
-    let fc = m.at(0.12);
-    let BL = [fc[0]-half*1.05,fc[1]];
-    let BR = [fc[0]+half*1.05,fc[1]];
-    let hgt = dist(...a,...BL);
-    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.06,bulgeR:hgt*0.06,belly:hgt*0.08,shade:arg.sail_shade,stripes:arg.stripes,seam:9}));
-    layers.masts.push({lines:m.lines,occ:[m.poly]});
-    layers.stays.push([m.head,bp.path[~~(bp.path.length*0.25)]],[m.head,sp.path[~~(sp.path.length*0.25)]]);
-    layers.flags.push(flag(m.head,F*1.6,F*0.3,true,arg.sea_z));
-  }
-
-  // ---- ensign at the stern
-  if (arg.type != 3){
+  // the ensign on a staff at the stern
+  if (ctx.ensign){
     let st = h.sheer[h.sheer.length-1];
     let staff_top = [st[0]+F*0.5,st[1]-F*1.5];
     layers.rig.push([st,staff_top]);
     layers.flags.push(flag(staff_top,F*0.9,F*0.55,false,arg.sea_z+2));
   }
 
-  // ---- rails
-  if (arg.type == 0 || arg.type == 1){
-    hull.lines.push(...deck_rail(h,0.03,0.97,F*(arg.type == 0 ? 0.18 : 0.1)));
-  }else if (arg.type == 2){
-    hull.lines.push(...deck_rail(h,0.02,0.98,F*0.12));
-  }
+  // rigging that ends on the deck edge is lifted a hair above it, so the hull does not swallow it
+  let lift = p=>{
+    let t = h.tx(p[0]);
+    let y = h.ysh(t);
+    return (t > -0.05 && t < 1.05 && Math.abs(p[1]-y) < 0.8) ? [p[0],y-0.8] : p;
+  };
+  layers.rig = layers.rig.map(l=>l.map(lift));
+  layers.stays = layers.stays.map(l=>l.map(lift));
 
-  // ---- the sea, sized to the whole ship
-  let pts = [h.outline,...hull_extra.map(e=>e.occ).flat(),...layers.sails.map(s=>s.occ).flat(),...layers.stays].flat();
+  // the sea, sized to the whole ship
+  let pts = [h.outline,...ctx.hull_extra.map(e=>e.occ).flat(),...layers.sails.map(s=>s.occ).flat(),...layers.stays,...ctx.behind.map(e=>e.occ).flat()].flat();
   let xa = Math.min(...pts.map(p=>p[0]))-L*0.12;
   let xb = Math.max(...pts.map(p=>p[0]))+L*0.12;
   let ytop = Math.min(...pts.map(p=>p[1]));
@@ -1769,11 +2549,11 @@ function ship(arg){
   return compose([
     ...s.fronts,
     s.layer,
-    ...layers.front,
+    ...ctx.front,
     hull,
-    ...hull_extra,
+    ...ctx.hull_extra,
     {lines:layers.rig,occ:[]},
-    ...behind,
+    ...ctx.behind,
     ...layers.spars,
     ...layers.sails,
     ...layers.masts,
@@ -1788,7 +2568,7 @@ function ship(arg){
 
 function default_params(){
   return {
-    type:0,
+    kind:'ship',
     hull_length:300,
     freeboard:24,
     sheer:1,
@@ -1819,24 +2599,33 @@ function default_params(){
     topsail:0,
     bermuda:0,
     ketch:0,
+    lateen_len:0.9,
+    lateen_angle:0.5,
+    battens:6,
+    castle:1,
     decks:2,
-    deck_height:0.7,
+    deck_height:0.9,
     super_from:0.28,
     super_to:0.78,
     super_step:0.05,
     funnels:2,
-    funnel_w:0.6,
-    funnel_h:2,
+    funnel_w:0.9,
+    funnel_h:2.8,
     funnel_rake:0.1,
     funnel_band:1,
     smoke:6,
-    mast_h:5,
-    post_len:3,
-    post_curl:3.6,
+    mast_h:3.4,
+    post_len:9,
+    post_curl:4.5,
     oars:1,
     oar_angle:0.7,
     sail_width:1,
     stripes:8,
+    casemate:0,
+    turrets:1,
+    beam:0,
+    box:1.9,
+    sails_set:1,
     chop:0.3,
     speed:0.6,
     sea_z:0,
@@ -1844,114 +2633,35 @@ function default_params(){
   };
 }
 
-// the name decides some of the ship: SS, RMS and MV are steamers, HMS a man-of-war
+// how often each kind turns up, and which kinds a name's prefix allows
+const KIND_WEIGHTS = {ship:3,brig:2,clipper:2,galleon:1.5,schooner:3,cutter:1.5,lateen:1.5,junk:1.5,longship:1.2,galley:1.2,steamer:2,tug:1,yacht:1,paddle:1,ironclad:0.8};
+const PREFIX_KINDS = {
+  SS:{steamer:4,tug:1.5,yacht:0.5},
+  MV:{steamer:4,tug:1.5},
+  RMS:{steamer:1},
+  PS:{paddle:1},
+  SY:{yacht:1},
+  HMS:{ship:3,galleon:1.5,ironclad:1.5},
+  USS:{ironclad:2,ship:1,steamer:1},
+  SMS:{ironclad:2,steamer:1},
+};
+
+// the name decides some of the ship: SS and MV are steamers or tugs, PS a paddle steamer,
+// SY a steam yacht, HMS and USS warships
 function generate_params(name){
   let arg = default_params();
   let prefix = (name || '').trim().split(/\s+/)[0].toUpperCase();
-  if (['SS','RMS','MV','SMS'].includes(prefix)){
-    arg.type = 2;
-  }else if (prefix == 'HMS'){
-    arg.type = 0;
-    arg.warship = 1;
-  }else{
-    arg.type = choice([0,1,2,3],[4,4,2,1.5]);
-  }
+  let pool = PREFIX_KINDS[prefix] || KIND_WEIGHTS;
+  let kinds = Object.keys(pool);
+  arg.kind = choice(kinds,kinds.map(k=>pool[k]));
+  arg.warship = PREFIX_KINDS[prefix] && ['HMS','USS'].includes(prefix) && arg.kind == 'ship' ? 1 : 0;
   arg.sea_z = rand()*100;
   arg.chop = rndtri(0.1,0.3,0.6);
   arg.speed = rndtri(0,0.6,1);
   arg.gulls = choice([0,1,2,3],[3,2,2,1]);
   arg.sail_shade = rndtri(0.2,0.5,0.8);
   arg.rake = rndtri(0,0.05,0.12);
-
-  if (arg.type == 0){
-    arg.hull_length = rndtri(240,300,360);
-    arg.freeboard = arg.hull_length*rndtri(0.07,0.085,0.1);
-    arg.masts = arg.warship ? 3 : choice([1,2,3],[1,2,4]);
-    arg.tiers = arg.masts == 1 ? choice([2,3]) : choice([2,3,4],[2,4,2]);
-    arg.rig_height = rndtri(0.6,0.75,0.9)*(arg.masts == 1 ? 1.1 : 1);
-    arg.sheer = rndtri(0.6,1,1.5);
-    arg.bow_rise = rndtri(0.3,0.6,0.9);
-    arg.stern_rise = rndtri(0.5,0.9,1.4);
-    arg.bow_rake = rndtri(0.6,1,1.6);
-    arg.bow_curve = rndtri(0,0.3,0.6);
-    arg.stern_overhang = rndtri(0.2,0.6,1);
-    arg.transom = choice([0,1]);
-    arg.hull_tone = rndtri(0.35,0.6,0.85);
-    arg.ports = arg.warship ? 1 : choice([0,1]);
-    arg.furl = rndtri(0,0.3,0.8);
-    arg.reefs = choice([0,0,1,2]);
-    arg.spanker = choice([0,1],[1,3]);
-    arg.jibs = choice([1,2,3],[1,3,2]);
-    arg.bowsprit = rndtri(0.18,0.25,0.32);
-    arg.bowsprit_angle = rndtri(0.2,0.3,0.45);
-    arg.pennant = rndtri(1,2,3.5);
-    arg.yard = rndtri(0.85,1,1.15);
-  }else if (arg.type == 1){
-    arg.hull_length = rndtri(200,260,320);
-    arg.freeboard = arg.hull_length*rndtri(0.06,0.075,0.09);
-    arg.masts = choice([1,2],[2,3]);
-    arg.ketch = arg.masts == 2 ? choice([0,1],[3,1]) : 0;
-    arg.rig_height = rndtri(0.55,0.7,0.9)*(arg.masts == 1 ? 1.15 : 1);
-    arg.sheer = rndtri(0.4,0.8,1.2);
-    arg.bow_rise = rndtri(0.4,0.7,1);
-    arg.stern_rise = rndtri(0.2,0.5,0.8);
-    arg.bow_rake = rndtri(0.4,1,1.8);
-    arg.bow_curve = rndtri(0,0.3,0.6);
-    arg.stern_overhang = rndtri(0.3,0.9,1.6);
-    arg.transom = choice([0,1],[3,2]);
-    arg.hull_tone = rndtri(0.2,0.45,0.8);
-    arg.ports = choice([0,1],[3,1]);
-    arg.gaff_angle = rndtri(0.45,0.6,0.8);
-    arg.bermuda = choice([0,1],[4,1]);
-    arg.topsail = arg.bermuda ? 0 : choice([0,1]);
-    arg.reefs = choice([0,0,1]);
-    arg.jibs = choice([1,2,3],[2,3,1]);
-    arg.bowsprit = rndtri(0.1,0.18,0.25);
-    arg.bowsprit_angle = rndtri(0.1,0.2,0.3);
-    arg.pennant = rndtri(1,1.8,3);
-  }else if (arg.type == 2){
-    arg.hull_length = rndtri(300,360,420);
-    arg.freeboard = arg.hull_length*rndtri(0.07,0.085,0.1);
-    arg.sheer = rndtri(0.2,0.4,0.7);
-    arg.bow_rise = rndtri(0.5,0.8,1);
-    arg.stern_rise = rndtri(0.2,0.4,0.6);
-    arg.bow_rake = rndtri(0,0.3,0.8);
-    arg.bow_curve = rndtri(0,0.1,0.3);
-    arg.stern_overhang = rndtri(0.4,0.8,1.2);
-    arg.transom = 0;
-    arg.hull_tone = rndtri(0.6,0.8,0.95);
-    arg.decks = choice([1,2,3],[1,3,2]);
-    arg.deck_height = rndtri(0.75,0.9,1.1);
-    arg.super_from = rndtri(0.22,0.3,0.38);
-    arg.super_to = rndtri(0.65,0.75,0.82);
-    arg.super_step = rndtri(0.02,0.05,0.08);
-    arg.funnels = choice([1,2,3,4],[3,3,2,1]);
-    arg.funnel_w = rndtri(0.75,0.95,1.2);
-    arg.funnel_h = rndtri(2.2,2.8,3.6);
-    arg.funnel_rake = rndtri(0,0.1,0.2);
-    arg.funnel_band = choice([0,1]);
-    arg.smoke = choice([0,4,6,8],[1,2,2,1]);
-    arg.mast_h = rndtri(2.6,3.4,4.2);
-  }else{
-    arg.hull_length = rndtri(260,300,340);
-    arg.freeboard = arg.hull_length*rndtri(0.032,0.038,0.045);
-    arg.sheer = rndtri(4,5,6);
-    arg.sheer_pow = rndtri(3,3.6,4.4);
-    arg.bow_rise = rndtri(0.9,1,1.1);
-    arg.stern_rise = rndtri(0.85,0.95,1.05);
-    arg.bow_rake = rndtri(2.2,3,3.8);
-    arg.bow_curve = rndtri(0.6,1,1.4);
-    arg.stern_overhang = rndtri(2,2.8,3.6);
-    arg.transom = 0;
-    arg.hull_tone = rndtri(0.55,0.65,0.75);
-    arg.post_len = rndtri(7,9,11.5);
-    arg.post_curl = rndtri(3.8,4.5,5.2);
-    arg.oars = choice([0,1],[1,3]);
-    arg.oar_angle = rndtri(0.4,0.7,1);
-    arg.rig_height = rndtri(0.32,0.4,0.48);
-    arg.sail_width = rndtri(0.8,1,1.2);
-    arg.stripes = choice([0,6,8,10],[1,2,2,1]);
-  }
+  KINDS[arg.kind].params(arg);
   return arg;
 }
 
@@ -1963,10 +2673,10 @@ const SHIP_NOUN = ['Star','Gull','Wind','Tide','Albatross','Heron','Petrel','Mar
 const SHIP_ONE = ['Endeavour','Resolute','Intrepid','Dauntless','Valiant','Victory','Discovery','Adventure','Terror','Erebus','Beagle','Bounty','Calypso','Fram','Mayflower','Nautilus','Argo','Endurance','Aurora','Hesperus','Ariadne','Ophelia','Persephone','Cassiopeia','Orion','Triton','Neptune','Mercury','Juno','Minerva','Clementine','Matilda','Isabella','Henrietta','Perseverance','Constance','Serenity','Tenacity','Vigilant','Undaunted'];
 const SHIP_TITLE = ['Lady','Queen','Princess','Duchess','Countess'];
 const SHIP_GIVEN = ['Margaret','Elizabeth','Charlotte','Eleanor','Catherine','Mary','Anne','Victoria','Louisa','Harriet','Sophia','Adelaide'];
-const SHIP_PREFIX = ['HMS','SS','RMS','MV','The',''];
+const SHIP_PREFIX = ['HMS','SS','RMS','MV','PS','SY','USS','The',''];
 
 function ship_name(){
-  let prefix = choice(SHIP_PREFIX,[3,3,1.5,1,2,5]);
+  let prefix = choice(SHIP_PREFIX,[3,3,1.5,1,1,1,1,2,6]);
   let r = rand();
   let body;
   if (r < 0.45){
