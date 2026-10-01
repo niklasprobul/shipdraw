@@ -349,31 +349,47 @@ function seg_isect_poly(x0,y0,x1,y1,poly,is_ray=false){
   return isects;
 }
 
+// split a polyline where it crosses the polygon's edges, and sort the pieces into inside (true)
+// and outside (false). Each piece is classified by testing a point in its middle, rather than by
+// toggling at every crossing: a line that runs along an edge or grazes a corner would otherwise
+// flip inside and outside for the rest of its length
 function clip(polyline,polygon){
   if (!polyline.length){
     return {true:[],false:[]};
   }
-  let zero = seg_isect_poly(...polyline[0],polyline[0][0]+Math.E,polyline[0][1]+PI,polygon,true).length % 2 != 0;
-  let out = {
-    'true' :[[]],
-    'false':[[]],
-  }
-  let io = zero;
-  for (let i = 0; i < polyline.length; i++){
-    let a= polyline[i];
-    let b= polyline[i+1];
-    out[io][out[io].length-1].push(a);
-    if (!b) break;
-
+  let pieces = [[polyline[0]]];
+  for (let i = 0; i < polyline.length-1; i++){
+    let a = polyline[i];
+    let b = polyline[i+1];
     let isects = seg_isect_poly(...a,...b,polygon,false);
     for (let j = 0; j < isects.length; j++){
-      out[io][out[io].length-1].push(isects[j].xy);
-      io = !io;
-      out[io].push([isects[j].xy]);
+      pieces[pieces.length-1].push(isects[j].xy);
+      pieces.push([isects[j].xy]);
     }
+    pieces[pieces.length-1].push(b);
   }
-  out.true = out.true.filter(x=>x.length);
-  out.false = out.false.filter(x=>x.length);
+  let out = {true:[],false:[]};
+  let last = null;
+  for (let pc of pieces){
+    // a point inside the piece: the middle of its longest segment
+    let m = pc[0];
+    let best = -1;
+    for (let i = 0; i < pc.length-1; i++){
+      let d = distsq(...pc[i],...pc[i+1]);
+      if (d > best){
+        best = d;
+        m = lerp2d(...pc[i],...pc[i+1],0.5);
+      }
+    }
+    if (pc.length > 1 && best <= 0) continue;
+    let io = seg_isect_poly(...m,m[0]+Math.E,m[1]+PI,polygon,true).length % 2 != 0;
+    if (last === io && out[io].length){
+      out[io][out[io].length-1].push(...pc.slice(1));
+    }else{
+      out[io].push(pc.slice());
+    }
+    last = io;
+  }
   return out;
 }
 
@@ -1471,11 +1487,6 @@ function flag(p,len,wid,tri,z){
 // a spiral post (the stem and stern of a longship): a tapering tube that curls inward
 function curl_post(p,a0,len,turn,w){
   let n = 70;
-  if (ALT.dragon){
-    // a carved dragon: the neck leans outward instead of curling, and ends in a head
-    turn = -Math.sign(turn)*0.5;
-    len *= 0.8;
-  }
   let path = [p];
   let [x,y] = p;
   for (let i = 1; i < n; i++){
@@ -1485,21 +1496,8 @@ function curl_post(p,a0,len,turn,w){
     y += Math.sin(a)*len/(n-1)*(1-0.55*u);
     path.push([x,y]);
   }
-  let [l,r] = tube(path,u=>w*(1-(ALT.dragon ? 0.4 : 0.75)*u));
+  let [l,r] = tube(path,u=>w*(1-0.75*u));
   let poly = l.concat(r.slice().reverse());
-  if (ALT.dragon){
-    let e = path[n-1];
-    let d = path[n-1][0]-path[n-5][0] < 0 ? -1 : 1;
-    w *= 1.9;
-    let c = [e[0]+d*w*0.9,e[1]-w*0.2];
-    let head = ellipse(...c,w*1.5,w*0.75,d*0.25,16);
-    let eye = ellipse(c[0]+d*w*0.25,c[1]-w*0.2,w*0.2,w*0.2,0,8);
-    let jaw = [[c[0]+d*w*0.6,c[1]+w*0.15],[c[0]+d*w*1.9,c[1]+w*0.55]];
-    let crest = [[c[0]-d*w*0.6,c[1]-w*0.5],[c[0]-d*w*1.1,c[1]-w*1.2],[c[0]-d*w*0.2,c[1]-w*0.7],[c[0]-d*w*0.4,c[1]-w*1.4],[c[0]+d*w*0.2,c[1]-w*0.7]];
-    let neck = clip_multi([l,r],head).false;
-    jaw = [[c[0]+d*w*0.4,c[1]+w*0.1],[c[0]+d*w*1.7,c[1]+w*0.35],[c[0]+d*w*0.5,c[1]+w*0.45]];
-    return {lines:[...neck,head,eye,...fill_shape(eye,0.6),jaw,crest],occ:[poly,head],path};
-  }
   return {lines:[l,r,[l[l.length-1],r[r.length-1]]],occ:[poly],path};
 }
 
@@ -1873,7 +1871,7 @@ function deckhouse(x0,x1,y0,y1,F,o){
     let ww = F*(o.win || 0.1);
     let wy = lerp(y0,Math.min(y1,y0+F*(o.ht || 0.8)),0.55);
     for (let x = x0+F*0.3; x < x1-F*0.2; x += F*(o.pitch || 0.24)){
-      let p = o.round ? ellipse(x+ww/2,wy,ww*0.5,ww*0.5,0,10)
+      let p = o.round ? ellipse(x+ww/2,wy,ww*0.5,ww*0.5,0,16)
         : ALT.arch ? arch(x,x+ww,wy+ww*0.7,wy-ww*0.9)
         : [[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7],[x,wy-ww*0.7]];
       wins.push(p);
@@ -2675,7 +2673,7 @@ const KINDS = {
       arg.hull_tone = rndtri(0.5,0.65,0.8);
       arg.post_len = rndtri(4,5,6.5);
       arg.post_curl = rndtri(2.6,3.2,3.8);
-      arg.oar_angle = rndtri(0.85,1,1.15);
+      arg.oar_angle = rndtri(1.15,1.25,1.35);
       arg.rig_height = rndtri(0.32,0.38,0.44);
       arg.sail_width = rndtri(0.7,0.85,1);
       arg.stripes = choice([0,0,6,8]);
@@ -2684,7 +2682,7 @@ const KINDS = {
     build(ctx){
       let {h,L,F,arg,layers} = ctx;
       ctx.ensign = false;
-      ctx.dark = k=>((Math.abs(k-0.08) < 0.03 || Math.abs(k-0.17) < 0.03) ? 0 : 1);
+      ctx.dark = k=>1;
       ctx.front.push(bow_eye(h));
       // the ram: a bronze spur at the waterline, ahead of the stem
       let b = h.bow[~~(h.bow.length*0.6)];
@@ -2700,8 +2698,8 @@ const KINDS = {
       let sp = curl_post(h.sheer[h.sheer.length-1],-PI/2+0.7,F*arg.post_len,-arg.post_curl,F*0.32);
       ctx.hull_extra.push(sp);
       let step = F*0.75/L;
-      ctx.front.unshift(oar_bank(h,0.16,0.84,step,F*0.22,F*4.2,arg.oar_angle,0));
-      ctx.front.unshift(oar_bank(h,0.17,0.85,step,F*0.48,F*3.6,arg.oar_angle-0.08,0));
+      ctx.front.unshift(oar_bank(h,0.16,0.84,step,0,F*4.2,arg.oar_angle,0,F*0.7));
+      ctx.front.unshift(oar_bank(h,0.17,0.85,step,0,F*3.4,arg.oar_angle-0.06,0,F*0.38));
       single_square(ctx,0.45,arg.rig_height*L,L*0.18*arg.sail_width,arg.stripes,arg.furl);
       let m = layers.masts[layers.masts.length-1];
       layers.stays.push([m.head,h.sheer[0]],[m.head,h.sheer[h.sheer.length-1]]);
@@ -2793,7 +2791,7 @@ const KINDS = {
       ctx.front.push({lines:[l,r,...l.filter((p,i)=>i%3 == 0).map((p,i)=>[p,r[i*3]])],occ:[l.concat(r.slice().reverse())]});
       let [x0,y0] = h.deck(0.3);
       let x1 = h.deck(0.68)[0];
-      let house = deckhouse(x0,x1,y0-F*0.75,y0+F*0.4,F,{round:true,pitch:0.3});
+      let house = deckhouse(x0,x1,y0-F*0.75,y0+F*0.4,F,{round:true,pitch:0.32,win:0.16});
       let wx = x0+F*0.2;
       let wheel = deckhouse(wx,wx+F*1.5,y0-F*1.7,y0-F*0.74,F,{win:0.22,pitch:0.34,ht:0.9});
       ctx.behind.push(wheel,house);
@@ -3003,11 +3001,13 @@ function add_funnel(ctx,base,w,ht,rake,bands,smoke_n,i){
 }
 
 // a bank of oars from ports along the hull, reaching down into the water
-function oar_bank(h,t0,t1,step,depth,len,ang,dx){
+// depth is measured down from the deck edge; with low, the ports sit at that height above the
+// waterline instead (galleys), but never above the deck
+function oar_bank(h,t0,t1,step,depth,len,ang,dx,low){
   let oars = {lines:[],occ:[]};
   for (let t = t0; t <= t1; t += step){
     let [x,y] = h.deck(t);
-    let p = [x+dx,y+depth];
+    let p = [x+dx,low === undefined ? y+depth : Math.max(y+h.F*0.15,YW-low)];
     // tossed oars are held upright, blades to the sky
     let q = ALT.tossed ? [p[0]-Math.sin(0.25)*len*0.8,p[1]-Math.cos(0.25)*len*0.8] : [p[0]-Math.sin(ang)*len,p[1]+Math.cos(ang)*len];
     oars.lines.push(...spar(p,q,0.8).lines,ellipse(...p,1.2,1.2,0,8));
@@ -3197,7 +3197,7 @@ function default_params(){
 }
 
 // every element has a variant form; each ship draws each one in its variant form or not
-const VARIANTS = ['hull','muzzle','square_port','arch','lattice','sprit','radial','settee','fan','lozenge','festoon','deadeye','nest','swallow','bell','wisp','covered','shield','dragon','tossed','almond','trident','tyre','louvre','twin','chop','flock'];
+const VARIANTS = ['hull','muzzle','square_port','arch','lattice','sprit','radial','settee','fan','lozenge','festoon','deadeye','nest','swallow','bell','wisp','covered','shield','tossed','almond','trident','tyre','louvre','twin','chop','flock'];
 
 // how often each kind turns up, and which kinds a name's prefix allows
 const KIND_WEIGHTS = {ship:3,brig:2,clipper:2,galleon:1.5,schooner:3,cutter:1.5,lateen:1.5,junk:1.5,longship:1.2,galley:1.2,steamer:2,tug:1,yacht:1,paddle:1,ironclad:0.8};
