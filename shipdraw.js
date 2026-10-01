@@ -1066,8 +1066,8 @@ function hand_drawn(polylines,amp,freq,z){
   return polylines.map(p=>{
     let q = p.length > 1 ? resample(p,2) : p;
     return q.map(([x,y])=>[
-      x+(noise(x*freq,y*freq,z)-0.5)*amp+(noise(x*freq*4,y*freq*4,z+5)-0.5)*amp*0.12,
-      y+(noise(x*freq,y*freq,z+9)-0.5)*amp+(noise(x*freq*4,y*freq*4,z+13)-0.5)*amp*0.12,
+      x+(noise(x*freq,y*freq,z)-0.5)*amp,
+      y+(noise(x*freq,y*freq,z+9)-0.5)*amp,
     ]);
   });
 }
@@ -1095,8 +1095,7 @@ function hull_shape(arg){
   let ysh = t=>{
     t = Math.max(0,Math.min(1,t));
     let e = arg.sheer_pow || 2.2;
-    let wander = (noise(t*2.2,arg.sea_z+3)-0.5)*F*0.5*HAND*Math.sin(PI*Math.min(1,t*1.2));
-    return YW-F-F*arg.sheer*(arg.bow_rise*Math.pow(1-t,e)+arg.stern_rise*Math.pow(t,e))+wander;
+    return YW-F-F*arg.sheer*(arg.bow_rise*Math.pow(1-t,e)+arg.stern_rise*Math.pow(t,e));
   };
   let deck = t=>[lerp(xb,xs,t),ysh(t)];
   let n = 64;
@@ -3080,7 +3079,7 @@ function ship(arg){
     ...layers.flags,
     birds,
   ]);
-  return hand_drawn(drawing,1.6*HAND,0.035,arg.sea_z+21);
+  return hand_drawn(drawing,1.6*HAND,0.008,arg.sea_z+21);
 }
 
 
