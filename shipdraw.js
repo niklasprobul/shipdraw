@@ -1273,15 +1273,6 @@ function make_sail(TL,TR,BL,BR,o){
   // so there the cloths run across, from luff to leech
   if (o.seam === 0){
     // no seams
-  }else if (o.radial){
-    // a radial cut: the cloths fan out from the clew
-    let ns = Math.max(4,Math.round(width/(o.seam || 7)));
-    for (let i = 1; i < ns; i++){
-      let g = i/ns;
-      let seam = [];
-      for (let j = 0; j <= n; j++) seam.push(P(1-j/n,lerp(1,g,j/n)));
-      lines.push(seam);
-    }
   }else if (dist(...TL,...TR) > 1e-6){
     let ns = Math.max(2,Math.round(width/(o.seam || 7)));
     for (let i = 1; i < ns; i++){
@@ -1386,21 +1377,6 @@ function make_sail(TL,TR,BL,BR,o){
 
 // a sail furled on its yard: a fat roll with lashings
 function furled(a,b){
-  if (ALT.festoon){
-    // brailed up: the canvas hangs under the yard in loops
-    let k = Math.max(3,Math.round(dist(...a,...b)/9));
-    let lines = [];
-    let bottom = [];
-    for (let i = 0; i < k; i++){
-      let p = lerp2d(...a,...b,i/k);
-      let q = lerp2d(...a,...b,(i+1)/k);
-      let d = 3+rand()*2.5;
-      let loop = bezier3(p,[p[0],p[1]+d*1.3],[q[0],q[1]+d*1.3],q,10);
-      lines.push(loop);
-      bottom.push(...loop);
-    }
-    return {lines,occ:[[a,b].concat(bottom.slice().reverse())]};
-  }
   let path = resample([a,b],1.5);
   let [l,r] = tube(path,u=>1.8*Math.pow(Math.sin(PI*Math.min(0.98,Math.max(0.02,u))),0.3));
   let lines = [l,r];
@@ -1420,7 +1396,7 @@ function spar(a,b,w){
 }
 
 // shrouds from points high on the mast down to the deck edge, with ratlines across them
-function shrouds(h,m,u,n,spread){
+function shrouds(h,m,u,n,spread,ratlines=true){
   let lines = [];
   let top = m.at(u);
   let feet = [];
@@ -1439,7 +1415,7 @@ function shrouds(h,m,u,n,spread){
   let y0 = top[1]+4;
   let y1 = Math.max(...feet.map(f=>f[1]))-3;
   let xat = (f,y)=>lerp(top[0],f[0],(y-top[1])/(f[1]-top[1]));
-  for (let y = y0; y < y1; y += 3){
+  for (let y = y0; ratlines && y < y1; y += 3){
     lines.push([[xat(feet[0],y),y],[xat(feet[n-1],y),y]]);
   }
   return lines;
@@ -1589,24 +1565,8 @@ function funnel(base,w,ht,rake,bands){
   return {lines:clip_multi(lines,outline).true.concat([outline]),occ:[poly],top:at(0.5,1.02)};
 }
 
-// thin smoke: long wisps streaming aft, spreading and breaking up
-function smoke_wisp(p,r0,n,z){
-  let lines = [];
-  let len = r0*n*3;
-  for (let k = 0; k < 6; k++){
-    let l = [];
-    for (let u = 0; u <= 1; u += 0.02){
-      let spread = (k-2.5)*r0*0.35*(0.3+u*2);
-      l.push([p[0]+u*len,p[1]-u*len*0.3+spread+(noise(u*3,k*0.7,z)-0.5)*r0*2*u]);
-    }
-    lines.push(...binclip(l,(x,y,t)=>(noise(x*0.05,y*0.05,z+k)*(1.2-t) > 0.25)).true);
-  }
-  return {lines,occ:[]};
-}
-
 // smoke drifting aft and up from p: a chain of growing puffs, the nearest in front
 function smoke(p,r0,n,z){
-  if (ALT.wisp) return smoke_wisp(p,r0,n,z);
   let lines = [];
   let occ = [];
   let [x,y] = p;
@@ -1614,7 +1574,7 @@ function smoke(p,r0,n,z){
   for (let k = 0; k < n; k++){
     x += r*1.25;
     y -= r*0.45+(noise(k*0.3,z)-0.5)*r*0.8;
-    r *= 1.13;
+    r *= 1.07;
     let c = [];
     for (let i = 0; i <= 30; i++){
       let a = i/30*PI*2;
@@ -1652,18 +1612,6 @@ function sea(h,xa,xb,arg){
     }).true);
   }
   let occ = [[xa-1e4,surf(xa)]].concat(surface,[[xb+1e4,surf(xb)],[xb+1e4,YW+1e4],[xa-1e4,YW+1e4]]);
-  if (ALT.chop){
-    // whitecaps: small breaking crests on the near water, shaded under the curl
-    for (let i = 0; i < 14; i++){
-      let x = lerp(xa,xb,rand());
-      if (x > h.xb-F && x < h.xs+F) continue;
-      let y = surf(x)+rand()*F*1.4;
-      let sz = F*(0.25+rand()*0.3)*(1+(y-YW)/F*0.3);
-      let crest = bezier3([x-sz,y],[x-sz*0.3,y-sz*0.7],[x+sz*0.3,y-sz*0.6],[x+sz*0.5,y-sz*0.2],10);
-      lines.push(crest);
-      for (let j = 1; j <= 3; j++) lines.push([[x-sz*0.6+j*sz*0.2,y-sz*0.1],[x-sz*0.2+j*sz*0.25,y+sz*0.25]]);
-    }
-  }
   let fronts = [];
   // bow wave: a crest thrown up against the stem, with foam curls
   if (arg.speed > 0){
@@ -1728,7 +1676,9 @@ function gulls(xa,xb,ya,yb,n){
 function square_rig(m,arg,tiers,yw0,layers){
   let ys = [];
   for (let j = 0; j < tiers; j++){
-    ys.push(tiers == 1 ? 0.78 : lerp(0.36,0.92,j/(tiers-1)));
+    // each tier is 0.72 times the height of the one below
+    let S = k=>(1-Math.pow(0.72,k))/0.28;
+    ys.push(tiers == 1 ? 0.78 : 0.1+0.82*S(j+1)/S(tiers));
   }
   let half = j=>yw0*Math.pow(0.8,j);
   let yard = j=>{
@@ -1801,7 +1751,7 @@ function jibs(fm,bow,tip,n,arg,layers){
     let luff = lerp2d(...tack,...head,0.06);
     let clew = [lerp(tack[0],fm.base[0],0.68),lerp(tack[1],head[1],0.12)];
     let hgt = dist(...head,...tack);
-    layers.sails.push(make_sail(head,head,luff,clew,{bulgeR:hgt*0.06,belly:hgt*0.04,shade:arg.sail_shade,seam:6,radial:ALT.radial}));
+    layers.sails.push(make_sail(head,head,luff,clew,{bulgeR:hgt*0.06,belly:hgt*0.04,shade:arg.sail_shade,seam:6}));
   }
 }
 
@@ -2037,8 +1987,8 @@ function casemate(x0,x1,y1,ht,F){
 // a crow's nest: a hooped barrel fixed to the mast
 function crows_nest(m,F,u){
   let c = m.at(u);
-  let w = F*0.45;
-  let hh = F*0.42;
+  let w = F*0.3;
+  let hh = F*0.28;
   let poly = [[c[0]-w,c[1]-hh],[c[0]+w,c[1]-hh],[c[0]+w*0.8,c[1]+hh],[c[0]-w*0.8,c[1]+hh]];
   let lines = [poly.concat([poly[0]]),[[c[0]-w*0.95,c[1]-hh*0.4],[c[0]+w*0.95,c[1]-hh*0.4]],[[c[0]-w*0.88,c[1]+hh*0.4],[c[0]+w*0.88,c[1]+hh*0.4]]];
   for (let x = c[0]+w*0.3; x < c[0]+w*0.9; x += 1.4) lines.push([[x,c[1]-hh],[x-w*0.05,c[1]+hh]]);
@@ -2200,14 +2150,13 @@ function add_details(ctx){
   // pennants: each masthead may fly one, the tallest mast more often
   let heads = ctx.mastheads.slice().sort((a,b)=>a[1]-b[1]);
   heads.forEach((m,i)=>{
-    if (rand() < (i == 0 ? 0.8 : 0.4)){
-      let tri = ancient ? true : rand() < 0.8;
-      layers.flags.push(flag(m,F*(ancient ? 1.6 : arg.pennant*vary(0.3)),F*(ancient ? 0.3 : 0.16),tri,arg.sea_z+i*3));
+    if (kind != 'lateen' && kind != 'junk' && rand() < (i == 0 ? 0.8 : 0.4)){
+      layers.flags.push(flag(m,F*(ancient ? 1.6 : arg.pennant*vary(0.3)),F*(ancient ? 0.3 : 0.16),true,arg.sea_z+i*3));
     }
   });
 
   // a hoist of signal flags from the foremost masthead toward the bow
-  if (!ancient && ctx.mastheads.length){
+  if (!layers.sails.length && ctx.mastheads.length){
     let n = poisson(0.7*DETAIL.busy+0.2);
     if (n){
       let fore = ctx.mastheads.reduce((a,m)=>(m[0] < a[0] ? m : a),ctx.mastheads[0]);
@@ -2219,7 +2168,7 @@ function add_details(ctx){
   // smoke: most funnels are drawing; the number of puffs is Poisson around the ship's smokiness
   for (let f of ctx.funnels){
     if (!f.smoke || rand() > 0.8) continue;
-    let n = 2+poisson(f.smoke*0.7);
+    let n = Math.min(6,2+poisson(f.smoke*0.5));
     layers.flags.push(smoke(f.top,f.w*0.45,n,arg.sea_z+f.i));
   }
 
@@ -2242,7 +2191,8 @@ function add_details(ctx){
   // an anchor at the cathead
   if (!ancient && kind != 'yacht' && rand() < 0.55){
     let [x,y] = h.deck(0.06);
-    ctx.front.push(anchor(x+F*0.2,y+F*0.2,F));
+    let size = Math.min(F,(YW-F*0.2-y)/1.1);
+    if (size > F*0.5) ctx.front.push(anchor(x+F*0.2,y+F*0.12,size));
   }
 
   // a stern lantern on older ships
@@ -2256,10 +2206,10 @@ function add_details(ctx){
     ctx.behind.push(boat(x,y-F*0.35,F*1.7,F*0.32));
   }
   if (['schooner','cutter','yacht','lateen'].includes(kind) && rand() < 0.3){
-    let x = h.xs+F*2.5;
-    let bt = boat(x,YW-F*0.32,F*1.4,F*0.45);
-    let st = h.sheer[h.sheer.length-1];
-    bt.lines.push(bezier3(st,[st[0]+F*0.8,YW-F*0.1],[x-F*0.8,YW-F*0.1],[x,YW-F*0.25],10));
+    let x = h.xs+F*1.8;
+    let bt = boat(x,YW-F*0.3,F*1.6,F*0.45);
+    let st = h.stern[~~(h.stern.length*0.3)];
+    bt.lines.push(sag([st,[x,YW-F*0.2]],0.03));
     ctx.hull_extra.push(bt);
   }
 }
@@ -2310,10 +2260,10 @@ function sail_plan(ctx,plan){
     }else if (p.kind == 'gaff'){
       let boom = i < ms.length-1 ? (ms[i+1].base[0]-m.base[0])*0.9 : (h.xs-m.base[0])*0.95;
       gaff_rig(m,Object.assign({},arg,{topsail:p.topsail === undefined ? arg.topsail : p.topsail}),boom*(p.boom || 1),layers,p.bermuda);
-      layers.rig.push(...shrouds(h,m,0.62,3,F*0.5));
+      layers.rig.push(...shrouds(h,m,0.62,3,F*0.5,false));
     }else if (p.kind == 'lateen'){
       lateen_rig(m,arg,arg.lateen_len*L*p.h,arg.lateen_angle,layers);
-      layers.rig.push(...shrouds(h,m,0.8,2,F*0.6));
+      layers.rig.push(...shrouds(h,m,0.8,2,F*0.6,false));
     }else if (p.kind == 'junk'){
       junk_rig(m,arg,gap(i)*0.95*p.h,layers);
     }
@@ -2650,8 +2600,6 @@ const KINDS = {
       }
       ctx.front.push(sh);
       if (arg.oars) ctx.front.unshift(oar_bank(h,0.22,0.78,r*3.4/L,r*1.3,F*4,arg.oar_angle,r*0.85));
-      let so = h.deck(0.88);
-      ctx.hull_extra.push(spar([so[0]-F*0.2,so[1]-F*0.4],[so[0]+F*0.9,YW+F*1.5],1.6));
       single_square(ctx,0.5,arg.rig_height*L,L*0.22*arg.sail_width,arg.stripes);
       layers.stays.push([layers.masts[layers.masts.length-1].head,bp.path[~~(bp.path.length*0.25)]],[layers.masts[layers.masts.length-1].head,sp.path[~~(sp.path.length*0.25)]]);
     },
@@ -2743,16 +2691,27 @@ const KINDS = {
       let bw = F*1.3;
       let bridge = deckhouse(tt.x0,tt.x0+bw,tt.y0-F*0.7,tt.y0+1,F,{pitch:0.22,win:0.12,ht:0.7,rail:false});
       ctx.behind.unshift(bridge);
-      let bd = tiers[Math.min(1,tiers.length-1)];
-      ctx.behind.unshift(davit_boats(bd.x0+F*1.6,bd.x1-F*1.4,bd.y0,F));
-      for (let t of tiers) ctx.decks.push({x0:t.x0+F*0.4,x1:t.x1-F*0.4,y:()=>t.y0+0.5,pax:1});
-      ctx.decks.push({x0:h.deck(0.06)[0],x1:tiers[0].x0-F*0.3,pax:1},{x0:tiers[0].x1+F*0.3,x1:h.deck(0.94)[0],pax:1});
+      // as many funnels as fit with a clear gap between them
+      let fw = F*arg.funnel_w;
       let fx0 = tt.x0+bw+F*0.6;
       let fx1 = tt.x1-F*0.6;
-      for (let i = 0; i < arg.funnels; i++){
-        let x = arg.funnels == 1 ? (fx0+fx1)/2 : lerp(fx0,fx1,i/(arg.funnels-1));
-        add_funnel(ctx,[x,tt.y0+F*0.3],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,arg.funnel_band,arg.smoke,i);
+      let nf = Math.max(1,Math.min(arg.funnels,1+Math.floor((fx1-fx0)/(fw*1.7))));
+      for (let i = 0; i < nf; i++){
+        let x = nf == 1 ? (fx0+fx1)/2 : lerp(fx0,fx1,i/(nf-1));
+        add_funnel(ctx,[x,tt.y0+F*0.3],fw,F*arg.funnel_h,arg.funnel_rake,arg.funnel_band,arg.smoke,i);
       }
+      // lifeboats along the top deck, clear of the bridge, in front of the funnel bases
+      ctx.behind.unshift(davit_boats(tt.x0+bw+F*0.2,tt.x1-F*1.2,tt.y0,F));
+      // passengers stand only where a deck is open to the sky
+      for (let i = 0; i < tiers.length; i++){
+        let t = tiers[i];
+        let up = tiers[i+1];
+        let spans = up ? [[t.x0,up.x0],[up.x1,t.x1]] : [[t.x0+bw,t.x1]];
+        for (let [a,b] of spans){
+          if (b-a > F) ctx.decks.push({x0:a+F*0.3,x1:b-F*0.3,y:()=>t.y0+0.5,pax:1});
+        }
+      }
+      ctx.decks.push({x0:h.deck(0.06)[0],x1:tiers[0].x0-F*0.3,pax:1},{x0:tiers[0].x1+F*0.3,x1:h.deck(0.94)[0],pax:1});
       let fm = pole_mast(ctx,0.08,F*arg.mast_h,arg.rake);
       let mm = pole_mast(ctx,0.9,F*arg.mast_h*0.95,arg.rake);
       layers.stays.push([h.sheer[0],fm.head],[fm.head,mm.head],[mm.head,h.sheer[h.sheer.length-1]]);
@@ -2785,10 +2744,6 @@ const KINDS = {
       ctx.holes.push(portholes(h,0.12,F*0.06,0.15,0.6,0.07));
       ctx.rail = 0.1;
       ctx.front.push(fenders(h,0.12,0.88,0.09));
-      // a thick rope fender over the stem
-      let bf = h.bow.slice(0,~~(h.bow.length*0.4));
-      let [l,r] = tube(resample(bf,1.5),u=>F*0.12);
-      ctx.front.push({lines:[l,r,...l.filter((p,i)=>i%3 == 0).map((p,i)=>[p,r[i*3]])],occ:[l.concat(r.slice().reverse())]});
       let [x0,y0] = h.deck(0.3);
       let x1 = h.deck(0.68)[0];
       let house = deckhouse(x0,x1,y0-F*0.75,y0+F*0.4,F,{round:true,pitch:0.32,win:0.16});
@@ -2796,9 +2751,6 @@ const KINDS = {
       let wheel = deckhouse(wx,wx+F*1.5,y0-F*1.7,y0-F*0.74,F,{win:0.22,pitch:0.34,ht:0.9});
       ctx.behind.push(wheel,house);
       add_funnel(ctx,[wx+F*2.4,y0-F*0.6],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,arg.funnel_band,arg.smoke,0);
-      // the towing hook aft
-      let [tx,ty] = h.deck(0.84);
-      layers.rig.push(bezier3([tx-F*0.4,ty],[tx-F*0.4,ty-F*0.6],[tx+F*0.4,ty-F*0.6],[tx+F*0.4,ty],10),[[tx,ty-F*0.45],[tx+F*0.15,ty-F*0.2]]);
       let fm = pole_mast(ctx,0.22,F*arg.mast_h,arg.rake);
       layers.stays.push([h.sheer[0],fm.head],[fm.head,h.deck(0.5)]);
     },
@@ -2851,9 +2803,9 @@ const KINDS = {
           layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
           let tack = m.at(0.12);
           layers.sails.push(furled(tack,[tack[0]+F*3,tack[1]-F*0.2]));
-          layers.rig.push(...shrouds(h,m,0.7,3,F*0.5));
+          layers.rig.push(...shrouds(h,m,0.7,3,F*0.5,false));
         }
-        layers.stays.push([layers.masts[0].head,tip],[layers.masts[0].head,layers.masts[1].head]);
+        layers.stays.push([layers.masts[0].head,tip]);
       }
     },
   },
@@ -3030,7 +2982,7 @@ function single_square(ctx,t,ht,half,stripes,furl){
     let BL = [fc[0]-half*1.05,fc[1]];
     let BR = [fc[0]+half*1.05,fc[1]];
     let hgt = dist(...a,...BL);
-    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.06,bulgeR:hgt*0.06,belly:hgt*0.08,shade:arg.sail_shade,stripes:ALT.lozenge ? 0 : stripes,lozenge:ALT.lozenge,seam:9,patches:poisson(DETAIL.wear)}));
+    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.06,bulgeR:hgt*0.06,belly:hgt*0.08,shade:arg.sail_shade,stripes:ALT.lozenge ? 0 : stripes,lozenge:ALT.lozenge,seam:9,patches:(stripes || ALT.lozenge) ? 0 : poisson(DETAIL.wear)}));
   }
   layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
   ctx.mastheads.push(m.head);
@@ -3197,7 +3149,7 @@ function default_params(){
 }
 
 // every element has a variant form; each ship draws each one in its variant form or not
-const VARIANTS = ['hull','muzzle','square_port','arch','lattice','sprit','radial','settee','fan','lozenge','festoon','deadeye','nest','swallow','bell','wisp','covered','shield','tossed','almond','trident','tyre','louvre','twin','chop','flock'];
+const VARIANTS = ['hull','muzzle','square_port','arch','lattice','sprit','settee','fan','lozenge','deadeye','nest','swallow','bell','covered','shield','tossed','almond','trident','tyre','louvre','twin','flock'];
 
 // how often each kind turns up, and which kinds a name's prefix allows
 const KIND_WEIGHTS = {ship:3,brig:2,clipper:2,galleon:1.5,schooner:3,cutter:1.5,lateen:1.5,junk:1.5,longship:1.2,galley:1.2,steamer:2,tug:1,yacht:1,paddle:1,ironclad:0.8};
