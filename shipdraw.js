@@ -1461,8 +1461,14 @@ function flag(p,len,wid,tri,z){
 }
 
 // a spiral post (the stem and stern of a longship): a tapering tube that curls inward
-function curl_post(p,a0,len,turn,w){
+function curl_post(p,a0,len,turn,w,inward,depth=2.5){
   let n = 70;
+  // the post grows out of the hull: it starts inside, set in by half its width so its outer
+  // edge carries on the hull's own end line; the hull, drawn in front, hides the part below
+  let ni = [-Math.sin(a0),Math.cos(a0)];
+  if (ni[0]*inward < 0) ni = [-ni[0],-ni[1]];
+  p = [p[0]+ni[0]*w-Math.cos(a0)*w*depth,p[1]+ni[1]*w-Math.sin(a0)*w*depth];
+  len += w*depth;
   let path = [p];
   let [x,y] = p;
   for (let i = 1; i < n; i++){
@@ -1780,7 +1786,8 @@ function lateen_rig(m,arg,len,ang,layers){
 // a junk sail: a lug sail stiffened by battens, the yard rising aft, the sheets fanning down
 // from each batten to one block on the deck
 function junk_rig(m,arg,w,layers){
-  let top = m.at(0.94);
+  // the yard crosses just above the masthead, so the mast does not poke out above it
+  let top = m.at(1.02);
   let bot = m.at(0.1);
   let TL = [top[0]-w*0.18,top[1]+w*0.05];
   let TR = [top[0]+w*0.72,top[1]-w*0.2];
@@ -2189,7 +2196,8 @@ function add_details(ctx){
   }
 
   // an anchor at the cathead
-  if (!ancient && kind != 'yacht' && rand() < 0.55){
+  // (not on junks: the painted eye sits where the anchor would hang)
+  if (!ancient && kind != 'yacht' && kind != 'junk' && rand() < 0.55){
     let [x,y] = h.deck(0.06);
     let size = Math.min(F,(YW-F*0.2-y)/1.1);
     if (size > F*0.5) ctx.front.push(anchor(x+F*0.2,y+F*0.12,size));
@@ -2586,8 +2594,8 @@ const KINDS = {
       let {h,L,F,arg,layers} = ctx;
       ctx.ensign = false;
       let tan = (a,b)=>Math.atan2(a[1]-b[1],a[0]-b[0]);
-      let bp = curl_post(h.sheer[0],tan(h.bow[0],h.bow[3]),F*arg.post_len,arg.post_curl,F*0.42);
-      let sp = curl_post(h.sheer[h.sheer.length-1],tan(h.stern[0],h.stern[3]),F*arg.post_len*0.9,-arg.post_curl,F*0.42);
+      let bp = curl_post(h.sheer[0],tan(h.bow[0],h.bow[3]),F*arg.post_len,arg.post_curl,F*0.42,1);
+      let sp = curl_post(h.sheer[h.sheer.length-1],tan(h.stern[0],h.stern[3]),F*arg.post_len*0.9,-arg.post_curl,F*0.42,-1);
       ctx.hull_extra.push(bp,sp);
       let r = F*0.6;
       let sh = {lines:[],occ:[]};
@@ -2643,7 +2651,7 @@ const KINDS = {
       }else{
         ctx.hull_extra.push({lines:[ram.concat([ram[0]]),[[b[0]-F*1.2,YW-F*0.08],[b[0]+F*0.3,YW-F*0.15]],...fill_shape(ram,2)],occ:[ram]});
       }
-      let sp = curl_post(h.sheer[h.sheer.length-1],-PI/2+0.7,F*arg.post_len,-arg.post_curl,F*0.32);
+      let sp = curl_post(h.sheer[h.sheer.length-1],-PI/2+0.7,F*arg.post_len,-arg.post_curl,F*0.32,-1,5);
       ctx.hull_extra.push(sp);
       let step = F*0.75/L;
       ctx.front.unshift(oar_bank(h,0.16,0.84,step,0,F*4.2,arg.oar_angle,0,F*0.7));
