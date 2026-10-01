@@ -1817,27 +1817,93 @@ function spritsail(bow,tip,w,ht,arg,layers){
 // ---------------------------------------------------------------- structures
 
 // a deckhouse: a box with a shadow under its roof, a row of windows and a rail on top
+// a deckhouse: a box with a shadow under its roof, windows and a rail on top. With o.vary it
+// picks its own look: the kind of windows (square, round, arched, tall pairs, or an open
+// promenade with posts), one or two rows, a door, and ventilators and a skylight on the roof
 function deckhouse(x0,x1,y0,y1,F,o){
   o = o || {};
+  if (o.vary){
+    o = Object.assign({
+      style:choice(o.styles || ['square','round','arch','tall','promenade'],o.styles ? null : [3,2,1.5,1.5,1.5]),
+      rows:rand() < 0.35 ? 2 : 1,
+      door:rand() < 0.4,
+      vents:poisson(0.9),
+      skylight:rand() < 0.3,
+      pitch:lerp(0.2,0.32,rand()),
+    },o);
+  }
   let poly = [[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+  let ybot = Math.min(y1,y0+F*(o.ht || 0.8));
   let lines = [];
+  let extra = [];
+  let occ = [poly];
   for (let k = 1; k <= 3; k++) lines.push([[x0,y0+k*1.3],[x1,y0+k*1.3]]);
   let wins = [];
-  if (o.windows !== false){
+  let xs0 = x0+F*(o.door ? 0.45 : 0.3);
+  if (o.door && o.style != 'promenade'){
+    let d = [[x0+F*0.1,ybot],[x0+F*0.1,ybot-F*0.55],[x0+F*0.28,ybot-F*0.55],[x0+F*0.28,ybot]];
+    wins.push(d.concat([d[0]]));
+    extra.push([[x0+F*0.24,ybot-F*0.28],[x0+F*0.25,ybot-F*0.28]]);
+  }
+  if (o.style == 'promenade'){
+    // an open promenade: a shaded gallery seen between posts, a rail along its foot
+    let yb = lerp(y0+4,ybot,0.75);
+    let band = [[x0,y0+4],[x1,y0+4],[x1,yb],[x0,yb]];
+    let posts = [];
+    for (let x = x0+F*0.15; x < x1-F*0.1; x += F*o.pitch*1.4){
+      posts.push([[x,y0+4],[x+1.4,y0+4],[x+1.4,yb],[x,yb]]);
+    }
+    let shade = clip_out(fill_shape(band,1.3),posts);
+    extra.push(...shade,[[x0,yb],[x1,yb]],...posts.map(q=>[q[0],q[3]]),...posts.map(q=>[q[1],q[2]]));
+    lines = [];
+  }else if (o.windows !== false){
     let ww = F*(o.win || 0.1);
-    let wy = lerp(y0,Math.min(y1,y0+F*(o.ht || 0.8)),0.55);
-    for (let x = x0+F*0.3; x < x1-F*0.2; x += F*(o.pitch || 0.24)){
-      let p = o.round ? ellipse(x+ww/2,wy,ww*0.5,ww*0.5,0,16)
-        : ALT.arch ? arch(x,x+ww,wy+ww*0.7,wy-ww*0.9)
-        : [[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7],[x,wy-ww*0.7]];
-      wins.push(p);
+    let rows = o.rows || 1;
+    for (let r = 0; r < rows; r++){
+      let wy = rows == 1 ? lerp(y0,ybot,0.55) : lerp(y0+4,ybot,(r+0.6)/rows);
+      for (let x = xs0; x < x1-F*0.2; x += F*(o.pitch || 0.24)){
+        let style = o.style || (o.round ? 'round' : ALT.arch ? 'arch' : 'square');
+        if (style == 'round'){
+          wins.push(ellipse(x+ww/2,wy,ww*0.65,ww*0.65,0,16));
+        }else if (style == 'arch'){
+          wins.push(arch(x,x+ww,wy+ww*0.7,wy-ww*0.9));
+        }else if (style == 'tall'){
+          // tall windows in pairs, each with a glazing bar
+          let w2 = ww*0.55;
+          for (let x2 of [x,x+w2*1.4]){
+            wins.push([[x2,wy-ww*1.1],[x2+w2,wy-ww*1.1],[x2+w2,wy+ww*0.9],[x2,wy+ww*0.9],[x2,wy-ww*1.1]]);
+            extra.push([[x2,wy-ww*0.1],[x2+w2,wy-ww*0.1]]);
+          }
+          x += ww*0.4;
+        }else{
+          wins.push([[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7],[x,wy-ww*0.7]]);
+        }
+      }
     }
   }
-  lines = clip_out(lines,wins).concat(wins,[[[x0,y1],[x0,y0],[x1,y0],[x1,y1]]]);
+  lines = clip_out(lines,wins).concat(wins,extra,[[[x0,y1],[x0,y0],[x1,y0],[x1,y1]]]);
   if (o.rail !== false){
     lines.push(...deck_rail({deck:t=>[lerp(x0,x1,t),y0]},0,1,F*0.12));
   }
-  return {lines,occ:[poly]};
+  // a skylight: a small glazed box on the roof
+  if (o.skylight && x1-x0 > F*2){
+    let cx = lerp(x0,x1,0.3+rand()*0.4);
+    let sk = [[cx-F*0.35,y0],[cx-F*0.3,y0-F*0.25],[cx+F*0.3,y0-F*0.25],[cx+F*0.35,y0]];
+    lines.push(sk.concat([sk[0]]));
+    for (let k = 1; k < 4; k++) lines.push([[cx-F*0.3+k*F*0.15,y0-F*0.25],[cx-F*0.33+k*F*0.165,y0]]);
+    occ.push(sk);
+  }
+  // cowl ventilators: a pipe with a bell-mouthed cowl turned to the wind
+  for (let k = 0; k < (o.vents || 0); k++){
+    let x = lerp(x0+F*0.3,x1-F*0.3,rand());
+    let ht = F*(0.3+rand()*0.25);
+    let r = F*0.11;
+    let cowl = ellipse(x-r*0.6,y0-ht,r*0.8,r,0,14);
+    let pipe = [[x-r*0.35,y0],[x-r*0.35,y0-ht],[x+r*0.35,y0-ht+r*0.4],[x+r*0.35,y0]];
+    lines.push([pipe[0],pipe[1]],[pipe[2],pipe[3]],cowl,...fill_shape(ellipse(x-r*0.75,y0-ht,r*0.45,r*0.6,0,10),0.7));
+    occ.push(pipe,cowl);
+  }
+  return {lines,occ};
 }
 
 // a raised castle on the deck (galleons): its top follows the sheer, its ends lean outward,
@@ -2696,7 +2762,7 @@ const KINDS = {
       let tiers = deck_tiers(ctx,arg.super_from,arg.super_to,arg.decks,arg.super_step,arg.deck_height);
       let tt = tiers[tiers.length-1];
       let bw = F*1.3;
-      let bridge = deckhouse(tt.x0,tt.x0+bw,tt.y0-F*0.7,tt.y0+1,F,{pitch:0.22,win:0.12,ht:0.7,rail:false});
+      let bridge = deckhouse(tt.x0,tt.x0+bw,tt.y0-F*0.7,tt.y0+1,F,{pitch:0.22,win:0.12,ht:0.7,rail:false,vary:true,styles:['square','tall','arch'],rows:1,door:false,skylight:false,vents:0});
       ctx.behind.unshift(bridge);
       // as many funnels as fit with a clear gap between them
       let fw = F*arg.funnel_w;
@@ -2798,7 +2864,7 @@ const KINDS = {
       let tip = bowsprit(ctx,arg.bowsprit*L,arg.bowsprit_angle);
       let [x0,y0] = h.deck(0.3);
       let x1 = h.deck(0.74)[0];
-      ctx.behind.push(deckhouse(x0,x1,y0-F*0.6,y0+F*0.4,F,{pitch:0.3}));
+      ctx.behind.push(deckhouse(x0,x1,y0-F*0.6,y0+F*0.4,F,{pitch:0.3,vary:true,rows:1}));
       ctx.behind.unshift(davit_boats(x0+F*1.2,x1-F*1.8,y0-F*0.6,F));
       add_funnel(ctx,[(x0+x1)/2,y0-F*0.4],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,1,arg.smoke,0);
       if (arg.sails_set){
@@ -2847,7 +2913,7 @@ const KINDS = {
       ctx.front.push(paddle_box([px,py+F*0.1],F*arg.box,F));
       let [x0,y0] = h.deck(0.24);
       let x1 = h.deck(0.8)[0];
-      ctx.behind.push(deckhouse(x0,x1,y0-F*0.7,y0+F*0.4,F,{pitch:0.26}));
+      ctx.behind.push(deckhouse(x0,x1,y0-F*0.7,y0+F*0.4,F,{pitch:0.26,vary:true,rows:1}));
       let fxs = arg.funnels == 2 ? [px-F*1.6,px+F*1.6] : [px-F*(arg.beam ? 2 : 0)];
       fxs.forEach((x,i)=>add_funnel(ctx,[x,y0-F*0.5],F*arg.funnel_w,F*arg.funnel_h,arg.funnel_rake,0,arg.smoke,i));
       if (arg.beam){
@@ -2920,14 +2986,20 @@ function deck_tiers(ctx,a,b,n,step,dh){
   let {h,F} = ctx;
   let top = Math.min(...[a,b,(a+b)/2].map(t=>h.ysh(t)));
   let tiers = [];
+  // each tier steps back by its own amount and has its own height
+  let ta = a;
+  let tb = b;
   for (let i = 0; i < n; i++){
-    let ta = a+i*step;
-    let tb = b-i*step*0.6;
+    if (i){
+      ta += step*lerp(0.3,1.7,rand());
+      tb -= step*lerp(0.2,1.2,rand());
+    }
     let x0 = lerp(h.xb,h.xs,ta);
     let x1 = lerp(h.xb,h.xs,tb);
+    let th = dh*lerp(0.85,1.2,rand());
     let y1 = i == 0 ? h.ysh((ta+tb)/2)+F*0.4 : tiers[i-1].y0+1;
-    let y0 = (i == 0 ? top : tiers[i-1].y0)-F*dh;
-    let d = deckhouse(x0,x1,y0,y1,F,{ht:dh});
+    let y0 = (i == 0 ? top : tiers[i-1].y0)-F*th;
+    let d = deckhouse(x0,x1,y0,y1,F,{ht:th,vary:true});
     tiers.push({x0,x1,y0,y1,d});
   }
   for (let i = tiers.length-1; i >= 0; i--) ctx.behind.push(tiers[i].d);
