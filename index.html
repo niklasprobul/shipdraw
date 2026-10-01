@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shipdraw</title>
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #fbf5e6;
+    --plate: #fffaf0;
+    --ink: #2b2118;
+    --sepia: #6b5440;
+    --faded: #9a8468;
+    --rule: #c9b897;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 20px 56px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 17px;
+    line-height: 1.5;
+  }
+  main { max-width: 960px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 28px; }
+  h1 {
+    margin: 0;
+    font-weight: normal;
+    font-size: clamp(30px, 5vw, 44px);
+    letter-spacing: 0.08em;
+  }
+  .sub {
+    margin: 6px 0 0;
+    color: var(--sepia);
+    font-style: italic;
+  }
+  .ornament {
+    display: block;
+    width: 180px;
+    height: 10px;
+    margin: 14px auto 0;
+  }
+  figure { margin: 0; }
+  .plate {
+    background: var(--plate);
+    padding: 10px;
+    border: 1px solid var(--rule);
+    box-shadow: 0 1px 0 var(--rule), 0 10px 30px -18px rgba(70, 50, 30, 0.45);
+  }
+  .plate svg { display: block; width: 100%; height: auto; }
+  .plate svg [stroke="black"] { stroke: var(--ink); }
+  figcaption {
+    margin-top: 16px;
+    text-align: center;
+    color: var(--sepia);
+  }
+  figcaption .name { font-style: italic; color: var(--ink); font-size: 1.15em; }
+  .saves {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px 14px;
+    font-size: 13px;
+  }
+  nav {
+    margin-top: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 24px;
+    font-size: 15px;
+  }
+  .find {
+    margin-top: 14px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+  }
+  .find[hidden] { display: none; }
+  .find input {
+    font: inherit;
+    font-style: italic;
+    width: min(18em, 70vw);
+    color: var(--ink);
+    background: var(--plate);
+    border: 1px solid var(--rule);
+    padding: 4px 8px;
+  }
+  .find input:focus { outline: none; border-color: var(--sepia); }
+  nav a, nav button, .saves button, .find button {
+    font: inherit;
+    color: var(--sepia);
+    background: none;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 0 0 1px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  nav a:hover, nav button:hover, .saves button:hover, .find button:hover { color: var(--ink); border-bottom-color: var(--sepia); }
+  .saves button:disabled { color: var(--faded); cursor: progress; }
+  footer {
+    margin-top: 40px;
+    text-align: center;
+    color: var(--faded);
+    font-size: 14px;
+  }
+  footer a { color: var(--faded); }
+  footer a:hover { color: var(--sepia); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>shipdraw</h1>
+    <p class="sub">A new ship for every visitor, drawn from the moment you arrived</p>
+    <svg class="ornament" viewBox="0 0 180 10" aria-hidden="true">
+      <path d="M0 5 H78 M102 5 H180" stroke="#9a8468" stroke-width="1" fill="none"/>
+      <path d="M90 1 L94 5 L90 9 L86 5 Z" stroke="#9a8468" stroke-width="1" fill="none"/>
+    </svg>
+  </header>
+
+  <figure>
+    <div class="plate" id="plate"></div>
+    <div class="saves">
+      <button type="button" id="save-svg">Save as SVG</button>
+      <button type="button" id="save-png">Save as PNG</button>
+      <button type="button" id="save-gif">Save as GIF</button>
+    </div>
+    <figcaption id="caption"></figcaption>
+  </figure>
+
+  <nav>
+    <a id="another" href="">Draw another</a>
+    <a id="link" href="">Link to this ship</a>
+    <button type="button" id="find-open" aria-expanded="false" aria-controls="find">Find a ship</button>
+  </nav>
+  <form class="find" id="find" hidden>
+    <input id="find-name" type="text" placeholder="a name, e.g. HMS Endeavour or SS Matilda" aria-label="Ship name" autocomplete="off">
+    <button type="submit">Draw it</button>
+  </form>
+
+  <footer>
+    Procedurally generated in your browser by <a href="https://github.com/niklasprobul/shipdraw">shipdraw</a>,
+    a sister of <a href="https://github.com/niklasprobul/birddraw">birddraw</a> and <a href="https://github.com/LingDong-/fishdraw">fishdraw</a> by Lingdong Huang.
+  </footer>
+</main>
+
+<script src="shipdraw.js"></script>
+<script>
+  // the seed is the ship's name: taken from the address (?seed=...) or picked by the clock
+  let seed = new URLSearchParams(location.search).get('seed');
+  let drawn = new Date();
+  if (!seed){
+    jsr = (drawn.getTime() >>> 0) || 1;
+    seed = ship_name();
+  }
+  let polylines = main(seed);
+  let file = draw_svg(polylines);
+  document.getElementById('plate').innerHTML = file.replace('width="520" height="320"', 'viewBox="0 0 520 320"');
+
+  let esc = t => t.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let when = drawn.toLocaleString(undefined, {dateStyle: 'long', timeStyle: 'short'});
+  document.getElementById('caption').innerHTML =
+    '<span class="name">' + esc(seed) + '</span><br>drawn ' + esc(when);
+  document.getElementById('another').href = location.pathname;
+  document.getElementById('link').href = location.pathname + '?seed=' + encodeURIComponent(seed);
+
+  // find a ship: any name is a seed, so the same name always draws the same ship
+  let find = document.getElementById('find');
+  let find_open = document.getElementById('find-open');
+  let find_name = document.getElementById('find-name');
+  find_open.onclick = () => {
+    find.hidden = !find.hidden;
+    find_open.setAttribute('aria-expanded', String(!find.hidden));
+    if (!find.hidden) find_name.focus();
+  };
+  find.onsubmit = e => {
+    e.preventDefault();
+    let name = find_name.value.trim();
+    if (name) location.href = location.pathname + '?seed=' + encodeURIComponent(name);
+  };
+
+  let basename = seed.replace(/\s+/g, '_');
+
+  function download(blob, name){
+    let a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
+  // the plate drawn on a canvas, the same as draw_svg: paper, frame, and the polylines offset by the margin
+  const PAPER = [255, 250, 240];
+  function plate(scale){
+    let canvas = document.createElement('canvas');
+    canvas.width = 520*scale;
+    canvas.height = 320*scale;
+    let ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgb(' + PAPER + ')';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeRect(10, 10, 500, 300);
+    ctx.translate(10, 10);
+    return [canvas, ctx];
+  }
+
+  function stroke_all(ctx){
+    ctx.beginPath();
+    for (let p of polylines){
+      ctx.moveTo(...p[0]);
+      for (let j = 1; j < p.length; j++) ctx.lineTo(...p[j]);
+    }
+    ctx.stroke();
+  }
+
+  // a minimal GIF89a encoder: a few grey levels between paper and ink, LZW compressed, looping
+  function gif_encode(w, h, frames){
+    // frames: [{pixels: Uint8Array of palette indices, delay: centiseconds}]; index 4 is transparent
+    let out = [];
+    let bytes = a => { for (let b of a) out.push(b); };
+    let u16 = v => bytes([v & 255, (v >> 8) & 255]);
+    let str = s => bytes([...s].map(c => c.charCodeAt(0)));
+    str('GIF89a');
+    u16(w); u16(h);
+    bytes([0xF2, 0, 0]);                       // global table of 8 colours, 3 bits per channel
+    for (let i = 0; i < 8; i++){
+      let t = Math.min(i, 3)/3;
+      bytes(PAPER.map(c => Math.round(c*(1 - t))));
+    }
+    bytes([0x21, 0xFF, 11]); str('NETSCAPE2.0'); bytes([3, 1, 0, 0, 0]);
+    for (let f of frames){
+      bytes([0x21, 0xF9, 4, 0x05]); u16(f.delay); bytes([4, 0]);  // keep the previous frame, 4 is transparent
+      bytes([0x2C]); u16(0); u16(0); u16(w); u16(h); bytes([0]);
+      bytes([3]);
+      let data = lzw(3, f.pixels);
+      for (let i = 0; i < data.length; i += 255){
+        let chunk = data.subarray(i, i + 255);
+        out.push(chunk.length);
+        for (let b of chunk) out.push(b);
+      }
+      out.push(0);
+    }
+    out.push(0x3B);
+    return new Uint8Array(out);
+  }
+
+  function lzw(min_size, pixels){
+    let clear = 1 << min_size;
+    let eoi = clear + 1;
+    let size = min_size + 1;
+    let next = eoi + 1;
+    let table = new Int32Array(4096 << min_size).fill(-1);
+    let out = new Uint8Array(pixels.length*2 + 64);
+    let n = 0, acc = 0, nbits = 0;
+    let emit = c => {
+      acc |= c << nbits;
+      nbits += size;
+      while (nbits >= 8){ out[n++] = acc & 255; acc >>= 8; nbits -= 8; }
+    };
+    emit(clear);
+    let prefix = pixels[0];
+    for (let i = 1; i < pixels.length; i++){
+      let k = pixels[i];
+      let key = (prefix << min_size) | k;
+      if (table[key] >= 0){ prefix = table[key]; continue; }
+      emit(prefix);
+      if (next == 4096){
+        emit(clear);
+        table.fill(-1);
+        size = min_size + 1;
+        next = eoi + 1;
+      }else{
+        if (next >= (1 << size)) size++;
+        table[key] = next++;
+      }
+      prefix = k;
+    }
+    emit(prefix);
+    emit(eoi);
+    if (nbits > 0) out[n++] = acc & 255;
+    return out.subarray(0, n);
+  }
+
+  // the drawing animation: the polylines are drawn in order, a little more in every frame,
+  // then the finished plate holds before the loop starts again
+  function animation_gif(scale, nframes){
+    let [canvas, ctx] = plate(scale);
+    let w = canvas.width, h = canvas.height;
+    let segs = [];
+    let total = 0;
+    for (let p of polylines){
+      for (let j = 1; j < p.length; j++){
+        let l = Math.hypot(p[j][0] - p[j-1][0], p[j][1] - p[j-1][1]);
+        segs.push([p[j-1], p[j], total, l]);
+        total += l;
+      }
+    }
+    let prev = null;
+    let frames = [];
+    let si = 0;
+    for (let f = 0; f <= nframes; f++){
+      let upto = total*f/nframes;
+      ctx.beginPath();
+      while (si < segs.length && segs[si][2] < upto){
+        let [a, b, start, l] = segs[si];
+        let t0 = Math.max(0, (segs[si].done || 0));
+        let t1 = l ? Math.min(1, (upto - start)/l) : 1;
+        ctx.moveTo(a[0] + (b[0] - a[0])*t0, a[1] + (b[1] - a[1])*t0);
+        ctx.lineTo(a[0] + (b[0] - a[0])*t1, a[1] + (b[1] - a[1])*t1);
+        if (t1 < 1){ segs[si].done = t1; break; }
+        si++;
+      }
+      ctx.stroke();
+      let rgba = ctx.getImageData(0, 0, w, h).data;
+      let idx = new Uint8Array(w*h);
+      for (let i = 0; i < w*h; i++){
+        let t = (PAPER[1] - rgba[i*4 + 1])/PAPER[1];
+        idx[i] = Math.max(0, Math.min(3, Math.round(t*3)));
+      }
+      let px = idx;
+      if (prev){
+        px = new Uint8Array(w*h);
+        for (let i = 0; i < w*h; i++) px[i] = idx[i] == prev[i] ? 4 : idx[i];
+      }
+      frames.push({pixels: px, delay: f == nframes ? 300 : 5});
+      prev = idx;
+    }
+    return gif_encode(w, h, frames);
+  }
+
+  document.getElementById('save-svg').onclick = () => {
+    download(new Blob([file], {type: 'image/svg+xml'}), basename + '.svg');
+  };
+
+  document.getElementById('save-png').onclick = () => {
+    let [canvas, ctx] = plate(3);
+    stroke_all(ctx);
+    canvas.toBlob(blob => download(blob, basename + '.png'), 'image/png');
+  };
+
+  document.getElementById('save-gif').onclick = e => {
+    let button = e.target;
+    button.disabled = true;
+    button.textContent = 'Drawing the GIF…';
+    // let the label repaint before the encoder takes the main thread
+    setTimeout(() => {
+      try {
+        download(new Blob([animation_gif(1.5, 72)], {type: 'image/gif'}), basename + '.gif');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Save as GIF';
+      }
+    }, 30);
+  };
+</script>
+</body>
+</html>
