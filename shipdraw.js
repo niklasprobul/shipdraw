@@ -1010,6 +1010,21 @@ const YW = 200;
 // set from the ship's parameters at the start of ship()
 let HAND = 1;
 
+// which elements of this ship are drawn in their variant form (see VARIANTS); set in ship()
+let ALT = {};
+
+// an arched window: straight sides, a round head
+function arch(x0,x1,ybot,ytop){
+  let w = x1-x0;
+  let o = [[x0,ybot],[x0,ytop+w/2]];
+  for (let i = 1; i < 8; i++){
+    let a = PI+i/8*PI;
+    o.push([(x0+x1)/2+Math.cos(a)*w/2,ytop+w/2+Math.sin(a)*w/2]);
+  }
+  o.push([x1,ytop+w/2],[x1,ybot],[x0,ybot]);
+  return o;
+}
+
 // a random factor around 1, spreading wider with HAND
 function vary(spread){
   return 1+(rand()*2-1)*spread*HAND;
@@ -1107,7 +1122,14 @@ function gunports(h,k,size,t0,t1,step){
     let x = lerp(h.xb,h.xs,t);
     let y = lerp(h.ysh(t),YW+h.D,k);
     let p = [[x-size/2,y-size/2],[x+size/2,y-size/2],[x+size/2,y+size/2],[x-size/2,y+size/2]];
-    lines.push(p.concat([p[0]]),...fill_shape(p,0.8));
+    if (ALT.muzzle){
+      // run out: a gun's muzzle ring inside each dark port
+      let m = ellipse(x,y,size*0.32,size*0.32,0,12);
+      let bore = ellipse(x,y,size*0.12,size*0.12,0,8);
+      lines.push(p.concat([p[0]]),...clip_multi(fill_shape(p,0.8),m).false,m,bore,...fill_shape(bore,0.5));
+    }else{
+      lines.push(p.concat([p[0]]),...fill_shape(p,0.8));
+    }
     occ.push(p);
   }
   return {lines,occ};
@@ -1119,7 +1141,9 @@ function portholes(h,k,r,t0,t1,step){
   for (let t = t0; t <= t1; t += step){
     let x = lerp(h.xb,h.xs,t);
     let y = lerp(h.ysh(t),YW+h.D,k);
-    let c = ellipse(x,y,r,r,0,14);
+    let c = ALT.square_port
+      ? [[x-r,y-r*0.6],[x-r*0.6,y-r],[x+r*0.6,y-r],[x+r,y-r*0.6],[x+r,y+r*0.6],[x+r*0.6,y+r],[x-r*0.6,y+r],[x-r,y+r*0.6],[x-r,y-r*0.6]]
+      : ellipse(x,y,r,r,0,14);
     lines.push(c);
     occ.push(c);
   }
@@ -1136,7 +1160,7 @@ function stern_windows(h,rows,cols){
     for (let j = 0; j < rows; j++){
       let x = lerp(h.xb,h.xs,t);
       let y = h.ysh(t)+h.F*(0.16+j*0.2);
-      let p = [[x-w/2,y-w*0.7],[x+w/2,y-w*0.7],[x+w/2,y+w*0.7],[x-w/2,y+w*0.7]];
+      let p = ALT.arch ? arch(x-w/2,x+w/2,y+w*0.7,y-w*0.9) : [[x-w/2,y-w*0.7],[x+w/2,y-w*0.7],[x+w/2,y+w*0.7],[x-w/2,y+w*0.7]];
       lines.push(p.concat([p[0]]),[[x,y-w*0.7],[x,y+w*0.7]]);
       occ.push(p);
     }
@@ -1153,9 +1177,15 @@ function deck_rail(h,t0,t1,height){
     top.push([x,y-height]);
   }
   lines.push(top);
+  let prev = null;
   for (let t = t0; t <= t1+1e-6; t += 0.018){
     let [x,y] = h.deck(t);
     lines.push([[x,y],[x,y-height]]);
+    // a lattice rail: crossed laths between the stanchions
+    if (ALT.lattice && prev){
+      lines.push([prev[0],[x,y-height]],[prev[1],[x,y]]);
+    }
+    prev = [[x,y],[x,y-height]];
   }
   return lines;
 }
@@ -1213,6 +1243,15 @@ function make_sail(TL,TR,BL,BR,o){
   // so there the cloths run across, from luff to leech
   if (o.seam === 0){
     // no seams
+  }else if (o.radial){
+    // a radial cut: the cloths fan out from the clew
+    let ns = Math.max(4,Math.round(width/(o.seam || 7)));
+    for (let i = 1; i < ns; i++){
+      let g = i/ns;
+      let seam = [];
+      for (let j = 0; j <= n; j++) seam.push(P(1-j/n,lerp(1,g,j/n)));
+      lines.push(seam);
+    }
   }else if (dist(...TL,...TR) > 1e-6){
     let ns = Math.max(2,Math.round(width/(o.seam || 7)));
     for (let i = 1; i < ns; i++){
@@ -1233,15 +1272,48 @@ function make_sail(TL,TR,BL,BR,o){
   }
   // battens: stiff bamboo laths across the sail, drawn double
   for (let k = 1; k <= (o.battens || 0); k++){
-    let g = k/(o.battens+1);
+    let gk = k/(o.battens+1);
     let a = [];
     let b = [];
     for (let i = 0; i <= n; i++){
+      // fan battens crowd together toward the head of the luff
+      let g = o.fan ? gk*lerp(0.45,1,i/n) : gk;
       let p = P(i/n,g);
       a.push(p);
       b.push([p[0],p[1]+1.3]);
     }
     lines.push(a,b);
+  }
+  // a lozenge pattern: crossed double lines over the whole sail
+  if (o.lozenge){
+    for (let c = -1; c < 2; c += 0.2){
+      for (let sgn of [1,-1]){
+        for (let dd of [0,0.025]){
+          let l = [];
+          for (let i = 0; i <= n; i++){
+            let f = i/n;
+            let g = sgn > 0 ? c+dd+f : c+dd+1-f;
+            if (g >= 0 && g <= 1) l.push(P(f,g));
+          }
+          if (l.length > 1) lines.push(l);
+        }
+      }
+    }
+  }
+  // patches sewn onto old canvas: a stitched rectangle or two
+  for (let k = 0; k < (o.patches || 0); k++){
+    let f0 = 0.15+rand()*0.55;
+    let g0 = 0.2+rand()*0.5;
+    let f1 = f0+0.18+rand()*0.12;
+    let g1 = g0+0.14+rand()*0.12;
+    let rect = [];
+    for (let i = 0; i <= 8; i++) rect.push(P(lerp(f0,f1,i/8),g0));
+    for (let i = 0; i <= 8; i++) rect.push(P(f1,lerp(g0,g1,i/8)));
+    for (let i = 0; i <= 8; i++) rect.push(P(lerp(f1,f0,i/8),g1));
+    for (let i = 0; i <= 8; i++) rect.push(P(f0,lerp(g1,g0,i/8)));
+    lines.push(rect);
+    let inner = resample(rect.map(q=>lerp2d(...q,...P((f0+f1)/2,(g0+g1)/2),0.12)),1);
+    for (let i = 0; i < inner.length-1; i += 3) lines.push([inner[i],lerp2d(...inner[i],...rect[~~(i/(inner.length-1)*(rect.length-1))],0.9)]);
   }
   // painted stripes: every other panel hatched dark
   if (o.stripes){
@@ -1284,6 +1356,21 @@ function make_sail(TL,TR,BL,BR,o){
 
 // a sail furled on its yard: a fat roll with lashings
 function furled(a,b){
+  if (ALT.festoon){
+    // brailed up: the canvas hangs under the yard in loops
+    let k = Math.max(3,Math.round(dist(...a,...b)/9));
+    let lines = [];
+    let bottom = [];
+    for (let i = 0; i < k; i++){
+      let p = lerp2d(...a,...b,i/k);
+      let q = lerp2d(...a,...b,(i+1)/k);
+      let d = 3+rand()*2.5;
+      let loop = bezier3(p,[p[0],p[1]+d*1.3],[q[0],q[1]+d*1.3],q,10);
+      lines.push(loop);
+      bottom.push(...loop);
+    }
+    return {lines,occ:[[a,b].concat(bottom.slice().reverse())]};
+  }
   let path = resample([a,b],1.5);
   let [l,r] = tube(path,u=>1.8*Math.pow(Math.sin(PI*Math.min(0.98,Math.max(0.02,u))),0.3));
   let lines = [l,r];
@@ -1312,6 +1399,13 @@ function shrouds(h,m,u,n,spread){
     feet.push([x,h.ysh(h.tx(x))]);
   }
   for (let f of feet) lines.push([top,f]);
+  if (ALT.deadeye){
+    // deadeyes: the shrouds end in round blocks, chained to the side
+    for (let f of feet){
+      let c = lerp2d(...f,...top,4/dist(...f,...top));
+      lines.push(ellipse(...c,1.3,1.3,0,10),[[c[0],c[1]+1.3],[f[0],f[1]+2.5]]);
+    }
+  }
   let y0 = top[1]+4;
   let y1 = Math.max(...feet.map(f=>f[1]))-3;
   let xat = (f,y)=>lerp(top[0],f[0],(y-top[1])/(f[1]-top[1]));
@@ -1338,6 +1432,11 @@ function flag(p,len,wid,tri,z){
     bot.push([x,p[1]+wave+w]);
   }
   let poly = top.concat(bot.slice().reverse());
+  if (ALT.swallow){
+    // a swallowtail: a notch cut into the fly
+    let m = lerp2d(...top[n],...bot[n],0.5);
+    poly = top.concat([[m[0]-len*0.22,m[1]]],bot.slice().reverse());
+  }
   let lines = [poly.concat([poly[0]])];
   if (!tri){
     for (let k = 1; k < 4; k += 2){
@@ -1358,6 +1457,11 @@ function flag(p,len,wid,tri,z){
 // a spiral post (the stem and stern of a longship): a tapering tube that curls inward
 function curl_post(p,a0,len,turn,w){
   let n = 70;
+  if (ALT.dragon){
+    // a carved dragon: the neck leans outward instead of curling, and ends in a head
+    turn = -Math.sign(turn)*0.5;
+    len *= 0.8;
+  }
   let path = [p];
   let [x,y] = p;
   for (let i = 1; i < n; i++){
@@ -1367,8 +1471,21 @@ function curl_post(p,a0,len,turn,w){
     y += Math.sin(a)*len/(n-1)*(1-0.55*u);
     path.push([x,y]);
   }
-  let [l,r] = tube(path,u=>w*(1-0.75*u));
+  let [l,r] = tube(path,u=>w*(1-(ALT.dragon ? 0.4 : 0.75)*u));
   let poly = l.concat(r.slice().reverse());
+  if (ALT.dragon){
+    let e = path[n-1];
+    let d = path[n-1][0]-path[n-5][0] < 0 ? -1 : 1;
+    w *= 1.9;
+    let c = [e[0]+d*w*0.9,e[1]-w*0.2];
+    let head = ellipse(...c,w*1.5,w*0.75,d*0.25,16);
+    let eye = ellipse(c[0]+d*w*0.25,c[1]-w*0.2,w*0.2,w*0.2,0,8);
+    let jaw = [[c[0]+d*w*0.6,c[1]+w*0.15],[c[0]+d*w*1.9,c[1]+w*0.55]];
+    let crest = [[c[0]-d*w*0.6,c[1]-w*0.5],[c[0]-d*w*1.1,c[1]-w*1.2],[c[0]-d*w*0.2,c[1]-w*0.7],[c[0]-d*w*0.4,c[1]-w*1.4],[c[0]+d*w*0.2,c[1]-w*0.7]];
+    let neck = clip_multi([l,r],head).false;
+    jaw = [[c[0]+d*w*0.4,c[1]+w*0.1],[c[0]+d*w*1.7,c[1]+w*0.35],[c[0]+d*w*0.5,c[1]+w*0.45]];
+    return {lines:[...neck,head,eye,...fill_shape(eye,0.6),jaw,crest],occ:[poly,head],path};
+  }
   return {lines:[l,r,[l[l.length-1],r[r.length-1]]],occ:[poly],path};
 }
 
@@ -1377,7 +1494,22 @@ function shield(c,r,k){
   let o = ellipse(...c,r,r,0,24);
   let boss = ellipse(...c,r*0.24,r*0.24,0,12);
   let lines = [o,boss];
-  if (k % 3 == 0){
+  if (ALT.shield){
+    if (k % 2 == 0){
+      // painted rings
+      lines.push(ellipse(...c,r*0.62,r*0.62,0,20),ellipse(...c,r*0.8,r*0.8,0,22));
+    }else{
+      // quartered, two quarters dark
+      for (let q of [0,2]){
+        let wedge = [c];
+        for (let i = 0; i <= 6; i++){
+          let a = q*PI/2+i/6*PI/2;
+          wedge.push([c[0]+Math.cos(a)*r,c[1]+Math.sin(a)*r]);
+        }
+        lines.push(...clip_multi(fill_shape(wedge,1.1),boss).false);
+      }
+    }
+  }else if (k % 3 == 0){
     for (let a = 0; a < 4; a++){
       let ang = a*PI/2+PI/4;
       lines.push([[c[0]+Math.cos(ang)*r*0.24,c[1]+Math.sin(ang)*r*0.24],[c[0]+Math.cos(ang)*r,c[1]+Math.sin(ang)*r]]);
@@ -1406,6 +1538,14 @@ function boat(x,y,len,ht){
   }
   let poly = top.concat(bot.slice().reverse());
   let lines = [poly.concat([poly[0]]),top.map(p=>[p[0],p[1]+ht*0.3])];
+  if (ALT.covered){
+    // a canvas cover laced over the boat
+    let cov = top.map((p,i)=>[p[0],p[1]-ht*0.45*Math.sin(PI*i/(top.length-1))]);
+    let cpoly = cov.concat(top.slice().reverse());
+    lines.push(cov,...clip_multi(shade_shape(cpoly,1.4,2,2),cpoly).true);
+    for (let i = 3; i < top.length-2; i += 3) lines.push([cov[i],[top[i][0],top[i][1]+ht*0.3]]);
+    return {lines,occ:[poly,cpoly]};
+  }
   return {lines,occ:[poly]};
 }
 
@@ -1415,8 +1555,13 @@ function funnel(base,w,ht,rake,bands){
   let aft = [Math.cos(rake),Math.sin(rake)];
   let taper = (rand()*2-1)*0.12*HAND;
   ht *= vary(0.12);
-  let at = (f,u)=>[base[0]+aft[0]*w*(f-0.5)*(1-taper*u)+dir[0]*ht*u,base[1]+aft[1]*w*(f-0.5)*(1-taper*u)+dir[1]*ht*u];
-  let poly = [at(0,-0.1),at(1,-0.1),at(1,1),at(0.5,1.02),at(0,1)];
+  // a bell-topped funnel flares out at the crown
+  let wf = u=>(1-taper*u)*(ALT.bell ? 1+Math.pow(Math.max(0,u-0.78)/0.22,2)*0.35 : 1);
+  let at = (f,u)=>[base[0]+aft[0]*w*(f-0.5)*wf(u)+dir[0]*ht*u,base[1]+aft[1]*w*(f-0.5)*wf(u)+dir[1]*ht*u];
+  let poly = [at(0,-0.1),at(1,-0.1)];
+  for (let u = 0.8; u <= 1+1e-6; u += 0.04) poly.push(at(1,u));
+  poly.push(at(0.5,1.02));
+  for (let u = 1; u >= 0.8-1e-6; u -= 0.04) poly.push(at(0,u));
   let lines = [poly.concat([poly[0]])];
   let top = [at(0,1),at(0,0.82),at(1,0.82),at(1,1)];
   lines.push(...fill_shape(top,1));
@@ -1432,8 +1577,24 @@ function funnel(base,w,ht,rake,bands){
   return {lines:clip_multi(lines,outline).true.concat([outline]),occ:[poly],top:at(0.5,1.02)};
 }
 
+// thin smoke: long wisps streaming aft, spreading and breaking up
+function smoke_wisp(p,r0,n,z){
+  let lines = [];
+  let len = r0*n*3;
+  for (let k = 0; k < 6; k++){
+    let l = [];
+    for (let u = 0; u <= 1; u += 0.02){
+      let spread = (k-2.5)*r0*0.35*(0.3+u*2);
+      l.push([p[0]+u*len,p[1]-u*len*0.3+spread+(noise(u*3,k*0.7,z)-0.5)*r0*2*u]);
+    }
+    lines.push(...binclip(l,(x,y,t)=>(noise(x*0.05,y*0.05,z+k)*(1.2-t) > 0.25)).true);
+  }
+  return {lines,occ:[]};
+}
+
 // smoke drifting aft and up from p: a chain of growing puffs, the nearest in front
 function smoke(p,r0,n,z){
+  if (ALT.wisp) return smoke_wisp(p,r0,n,z);
   let lines = [];
   let occ = [];
   let [x,y] = p;
@@ -1479,6 +1640,18 @@ function sea(h,xa,xb,arg){
     }).true);
   }
   let occ = [[xa-1e4,surf(xa)]].concat(surface,[[xb+1e4,surf(xb)],[xb+1e4,YW+1e4],[xa-1e4,YW+1e4]]);
+  if (ALT.chop){
+    // whitecaps: small breaking crests on the near water, shaded under the curl
+    for (let i = 0; i < 14; i++){
+      let x = lerp(xa,xb,rand());
+      if (x > h.xb-F && x < h.xs+F) continue;
+      let y = surf(x)+rand()*F*1.4;
+      let sz = F*(0.25+rand()*0.3)*(1+(y-YW)/F*0.3);
+      let crest = bezier3([x-sz,y],[x-sz*0.3,y-sz*0.7],[x+sz*0.3,y-sz*0.6],[x+sz*0.5,y-sz*0.2],10);
+      lines.push(crest);
+      for (let j = 1; j <= 3; j++) lines.push([[x-sz*0.6+j*sz*0.2,y-sz*0.1],[x-sz*0.2+j*sz*0.25,y+sz*0.25]]);
+    }
+  }
   let fronts = [];
   // bow wave: a crest thrown up against the stem, with foam curls
   if (arg.speed > 0){
@@ -1510,6 +1683,21 @@ function sea(h,xa,xb,arg){
 // gulls: a couple of shallow m-shapes in the sky
 function gulls(xa,xb,ya,yb,n){
   let lines = [];
+  if (ALT.flock && n){
+    // a skein of distant birds flying in a V
+    let x = lerp(xa,xb,0.2+rand()*0.6);
+    let y = lerp(ya,yb,rand());
+    let k = 5+~~(rand()*4);
+    for (let i = 0; i < k; i++){
+      let side = i%2 ? 1 : -1;
+      let r = ~~((i+1)/2);
+      let bx = x+r*9;
+      let by = y+side*r*4.5+(rand()-0.5);
+      let s = 2.8;
+      lines.push(resample([[bx-s,by-s*0.55],[bx-s*0.4,by-s*0.15],[bx,by],[bx+s*0.4,by-s*0.15],[bx+s,by-s*0.55]],0.5));
+    }
+    return lines;
+  }
   for (let i = 0; i < n; i++){
     let x = lerp(xa,xb,rand());
     let y = lerp(ya,yb,rand());
@@ -1550,7 +1738,8 @@ function square_rig(m,arg,tiers,yw0,layers){
     let BL = [fc[0]-m.aft[0]*fh,fc[1]-m.aft[1]*fh];
     let BR = [fc[0]+m.aft[0]*fh,fc[1]+m.aft[1]*fh];
     let hgt = dist(...a,...BL);
-    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.025,bulgeR:hgt*0.025,belly:hgt*0.09,shade:arg.sail_shade,reefs:j < 2 ? arg.reefs : 0}));
+    let patches = ALT.patch && rand() < 0.6 ? 1+~~(rand()*2) : 0;
+    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.025,bulgeR:hgt*0.025,belly:hgt*0.09,shade:arg.sail_shade,reefs:j < 2 ? arg.reefs : 0,patches}));
   }
   return ys;
 }
@@ -1564,6 +1753,16 @@ function gaff_rig(m,arg,boom_len,layers,bermuda){
     let head = m.at(0.96);
     let hgt = dist(...head,...tack);
     layers.sails.push(make_sail(head,head,tack,clew,{bulgeR:hgt*0.05,belly:boom_len*0.06,shade:arg.sail_shade}));
+    return;
+  }
+  if (ALT.sprit){
+    // a spritsail: no gaff, a long sprit from low on the mast holds up the peak
+    let throat = m.at(0.92);
+    let gl = boom_len*0.62;
+    let peak = [throat[0]+gl,throat[1]-gl*0.15];
+    layers.spars.push(spar(m.at(0.2),peak,0.8));
+    let hgt = dist(...throat,...tack);
+    layers.sails.push(make_sail(throat,peak,tack,clew,{bulgeR:hgt*0.07,belly:boom_len*0.05,shade:arg.sail_shade}));
     return;
   }
   let throat = m.at(0.66);
@@ -1590,7 +1789,7 @@ function jibs(fm,bow,tip,n,arg,layers){
     let luff = lerp2d(...tack,...head,0.06);
     let clew = [lerp(tack[0],fm.base[0],0.68),lerp(tack[1],head[1],0.12)];
     let hgt = dist(...head,...tack);
-    layers.sails.push(make_sail(head,head,luff,clew,{bulgeR:hgt*0.06,belly:hgt*0.04,shade:arg.sail_shade,seam:6}));
+    layers.sails.push(make_sail(head,head,luff,clew,{bulgeR:hgt*0.06,belly:hgt*0.04,shade:arg.sail_shade,seam:6,radial:ALT.radial}));
   }
 }
 
@@ -1607,7 +1806,10 @@ function lateen_rig(m,arg,len,ang,layers){
   let clew = [m.base[0]+len*0.42,foot[1]];
   layers.spars.push(spar(lo,hi,1.2));
   let hgt = dist(...hi,...clew);
-  let s = make_sail(hi,hi,lo,clew,{bulgeR:hgt*0.08,belly:len*0.05,shade:arg.sail_shade,seam:7});
+  // a settee sail keeps a short luff below the fore end of the yard
+  let s = ALT.settee
+    ? make_sail(lo,hi,[lo[0]+len*0.04,lo[1]+(foot[1]-lo[1])*0.35],clew,{bulgeR:hgt*0.08,belly:len*0.05,shade:arg.sail_shade,seam:7})
+    : make_sail(hi,hi,lo,clew,{bulgeR:hgt*0.08,belly:len*0.05,shade:arg.sail_shade,seam:7});
   layers.sails.push(s);
   layers.rig.push([clew,[clew[0]+len*0.08,foot[1]+m.height*0.12]]);
   return hi;
@@ -1624,7 +1826,7 @@ function junk_rig(m,arg,w,layers){
   let BR = [bot[0]+w*0.82,bot[1]-w*0.04];
   let hgt = dist(...TL,...BL);
   let nb = arg.battens;
-  let s = make_sail(TL,TR,BL,BR,{bulgeR:hgt*0.14,bulgeL:hgt*0.02,belly:0,seam:0,battens:nb,shade:arg.sail_shade*0.6});
+  let s = make_sail(TL,TR,BL,BR,{bulgeR:hgt*0.14,bulgeL:hgt*0.02,belly:0,seam:0,battens:nb,fan:ALT.fan,shade:arg.sail_shade*0.6});
   layers.sails.push(s);
   layers.spars.push(spar(TL,TR,1.2),spar(BL,BR,1.1));
   let block = [BR[0]+w*0.25,m.base[1]+m.height*0.03];
@@ -1657,7 +1859,9 @@ function deckhouse(x0,x1,y0,y1,F,o){
     let ww = F*(o.win || 0.1);
     let wy = lerp(y0,Math.min(y1,y0+F*(o.ht || 0.8)),0.55);
     for (let x = x0+F*0.3; x < x1-F*0.2; x += F*(o.pitch || 0.24)){
-      let p = o.round ? ellipse(x+ww/2,wy,ww*0.5,ww*0.5,0,10) : [[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7],[x,wy-ww*0.7]];
+      let p = o.round ? ellipse(x+ww/2,wy,ww*0.5,ww*0.5,0,10)
+        : ALT.arch ? arch(x,x+ww,wy+ww*0.7,wy-ww*0.9)
+        : [[x,wy-ww*0.7],[x+ww,wy-ww*0.7],[x+ww,wy+ww*0.7],[x,wy+ww*0.7],[x,wy-ww*0.7]];
       wins.push(p);
     }
   }
@@ -1711,6 +1915,25 @@ function bow_eye(h){
     eye.push([x+Math.cos(a)*r,y+Math.sin(a)*r*0.55*(Math.sin(a) > 0 ? 1 : 1.2)]);
   }
   let pupil = ellipse(x-r*0.15,y,r*0.32,r*0.32,0,12);
+  if (ALT.almond){
+    // an almond eye with a brow and lashes
+    eye = [];
+    for (let i = 0; i <= 20; i++){
+      let u = i/20;
+      eye.push([x-r*1.2+u*r*2.4,y-Math.sin(PI*u)*r*0.55]);
+    }
+    for (let i = 19; i >= 1; i--){
+      let u = i/20;
+      eye.push([x-r*1.2+u*r*2.4,y+Math.sin(PI*u)*r*0.4]);
+    }
+    let brow = [];
+    for (let i = 0; i <= 10; i++){
+      let u = i/10;
+      brow.push([x-r*1.1+u*r*2.3,y-r*0.75-Math.sin(PI*u)*r*0.35]);
+    }
+    let lashes = [0.3,0.5,0.7].map(u=>[[x-r*1.2+u*r*2.4,y-Math.sin(PI*u)*r*0.55],[x-r*1.2+u*r*2.4+r*0.1,y-Math.sin(PI*u)*r*0.55-r*0.3]]);
+    return {lines:[eye.concat([eye[0]]),pupil,...fill_shape(pupil,0.7),brow,...lashes],occ:[eye]};
+  }
   return {lines:[eye,pupil,...fill_shape(pupil,0.7)],occ:[eye]};
 }
 
@@ -1720,8 +1943,16 @@ function fenders(h,t0,t1,step){
   let occ = [];
   for (let t = t0; t <= t1; t += step){
     let [x,y] = h.deck(t);
-    let f = ellipse(x,y+h.F*0.32,h.F*0.13,h.F*0.24,0,14);
-    lines.push(f,[[x,y-h.F*0.05],[x,y+h.F*0.08]],...clip_multi(shade_shape(f,1.4,2,2),f).true);
+    let f;
+    if (ALT.tyre){
+      // old tyres for fenders
+      f = ellipse(x,y+h.F*0.3,h.F*0.2,h.F*0.2,0,16);
+      let hole = ellipse(x,y+h.F*0.3,h.F*0.1,h.F*0.1,0,12);
+      lines.push(f,hole,[[x,y-h.F*0.05],[x,y+h.F*0.1]],...clip_multi(clip_multi(shade_shape(f,1.2,2,2),f).true,hole).false);
+    }else{
+      f = ellipse(x,y+h.F*0.32,h.F*0.13,h.F*0.24,0,14);
+      lines.push(f,[[x,y-h.F*0.05],[x,y+h.F*0.08]],...clip_multi(shade_shape(f,1.4,2,2),f).true);
+    }
     occ.push(f);
   }
   return {lines,occ};
@@ -1739,9 +1970,17 @@ function paddle_box(c,R,F){
   let inner = arc.map(p=>lerp2d(...c,...p,0.82));
   let hub = arc.map(p=>lerp2d(...c,...p,0.28));
   lines.push(inner,hub,[[c[0]-R*0.82,c[1]],[c[0]+R*0.82,c[1]]]);
-  for (let i = 1; i < 12; i++){
-    let a = PI+i/12*PI;
-    lines.push([[c[0]+Math.cos(a)*R*0.28,c[1]+Math.sin(a)*R*0.28],[c[0]+Math.cos(a)*R*0.82,c[1]+Math.sin(a)*R*0.82]]);
+  if (ALT.louvre){
+    // louvred vents instead of a sunburst
+    let ip = inner.concat([inner[0]]);
+    let louv = [];
+    for (let x = c[0]-R*0.78; x < c[0]+R*0.8; x += R*0.09) louv.push([[x,c[1]-R],[x,c[1]]]);
+    lines.push(...clip_multi(clip_multi(louv,ip).true,hub.concat([hub[0]])).false);
+  }else{
+    for (let i = 1; i < 12; i++){
+      let a = PI+i/12*PI;
+      lines.push([[c[0]+Math.cos(a)*R*0.28,c[1]+Math.sin(a)*R*0.28],[c[0]+Math.cos(a)*R*0.82,c[1]+Math.sin(a)*R*0.82]]);
+    }
   }
   // the lower housing, hatched
   let low = [[c[0]-R,c[1]+1],[c[0]+R,c[1]+1],[c[0]+R,YW+F],[c[0]-R,YW+F]];
@@ -1759,8 +1998,10 @@ function turret(c,w,ht,F,dir){
   lines.push([[c[0]-w/2,c[1]-ht*0.45],[c[0]+w/2,c[1]-ht*0.45]]);
   let gx = dir < 0 ? c[0]-w/2 : c[0]+w/2;
   let gy = c[1]-ht*0.55;
-  let barrel = spar([gx,gy],[gx+dir*F*1.8,gy-F*0.05],F*0.09);
-  return {lines:clip_multi(lines.slice(1),poly).true.concat([lines[0]],barrel.lines),occ:[poly,...barrel.occ]};
+  let barrels = ALT.twin
+    ? [spar([gx,gy-ht*0.12],[gx+dir*F*1.8,gy-ht*0.12-F*0.05],F*0.08),spar([gx,gy+ht*0.12],[gx+dir*F*1.8,gy+ht*0.12-F*0.05],F*0.08)]
+    : [spar([gx,gy],[gx+dir*F*1.8,gy-F*0.05],F*0.09)];
+  return {lines:clip_multi(lines.slice(1),poly).true.concat([lines[0]],...barrels.map(b=>b.lines)),occ:[poly,...barrels.map(b=>b.occ).flat()]};
 }
 
 // an armoured casemate: a box with sloping ends and a row of gun ports
@@ -1781,8 +2022,20 @@ function casemate(x0,x1,y1,ht,F){
 }
 
 // a thin pole mast with a crosstree (steam ships)
+// a crow's nest: a hooped barrel fixed to the mast
+function crows_nest(m,F,u){
+  let c = m.at(u);
+  let w = F*0.45;
+  let hh = F*0.42;
+  let poly = [[c[0]-w,c[1]-hh],[c[0]+w,c[1]-hh],[c[0]+w*0.8,c[1]+hh],[c[0]-w*0.8,c[1]+hh]];
+  let lines = [poly.concat([poly[0]]),[[c[0]-w*0.95,c[1]-hh*0.4],[c[0]+w*0.95,c[1]-hh*0.4]],[[c[0]-w*0.88,c[1]+hh*0.4],[c[0]+w*0.88,c[1]+hh*0.4]]];
+  for (let x = c[0]+w*0.3; x < c[0]+w*0.9; x += 1.4) lines.push([[x,c[1]-hh],[x-w*0.05,c[1]+hh]]);
+  return {lines:clip_multi(lines.slice(1),poly.concat([poly[0]])).true.concat([lines[0]]),occ:[poly]};
+}
+
 function pole_mast(ctx,t,ht,rake){
   let m = make_mast(ctx.h.deck(t),ht,rake,ctx.F*0.09);
+  if (ALT.nest) ctx.layers.masts.push(crows_nest(m,ctx.F*0.8,0.72));
   ctx.layers.masts.push({lines:m.lines,occ:[m.poly]});
   let c = m.at(0.82);
   ctx.layers.rig.push([[c[0]-ctx.F*0.3,c[1]],[c[0]+ctx.F*0.3,c[1]]]);
@@ -1843,6 +2096,7 @@ function sail_plan(ctx,plan){
     }else if (p.kind == 'junk'){
       junk_rig(m,arg,gap(i)*0.95*p.h,layers);
     }
+    if (ALT.nest && (p.kind == 'square' || p.kind == 'gaff') && (i == 0 || p.kind == 'square')) layers.masts.push(crows_nest(m,ctx.F,0.84));
     layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
     if (i > 0 && p.kind != 'junk') layers.stays.push([m.head,ms[i-1].at(p.kind == 'square' ? 0.38 : 0.7)]);
   }
@@ -2213,7 +2467,14 @@ const KINDS = {
       // the ram: a bronze spur at the waterline, ahead of the stem
       let b = h.bow[~~(h.bow.length*0.6)];
       let ram = [[b[0]+F*0.3,YW-F*0.35],[b[0]-F*1.6,YW-F*0.02],[b[0]+F*0.3,YW+F*0.4]];
-      ctx.hull_extra.push({lines:[ram.concat([ram[0]]),[[b[0]-F*1.2,YW-F*0.08],[b[0]+F*0.3,YW-F*0.15]],...fill_shape(ram,2)],occ:[ram]});
+      if (ALT.trident){
+        // a three-pronged ram
+        let prongs = [-0.3,0,0.3].map(dy=>[[b[0]+F*0.3,YW+F*(dy-0.08)],[b[0]-F*(dy == 0 ? 1.7 : 1.3),YW+F*dy*1.15],[b[0]+F*0.3,YW+F*(dy+0.08)]]);
+        let hub = [[b[0]+F*0.3,YW-F*0.4],[b[0]-F*0.2,YW-F*0.4],[b[0]-F*0.2,YW+F*0.4],[b[0]+F*0.3,YW+F*0.4]];
+        ctx.hull_extra.push({lines:[...prongs.map(p=>p.concat([p[0]])),...prongs.map(p=>fill_shape(p,1.2)).flat(),hub.concat([hub[0]]),...fill_shape(hub,2)],occ:[...prongs,hub]});
+      }else{
+        ctx.hull_extra.push({lines:[ram.concat([ram[0]]),[[b[0]-F*1.2,YW-F*0.08],[b[0]+F*0.3,YW-F*0.15]],...fill_shape(ram,2)],occ:[ram]});
+      }
       let sp = curl_post(h.sheer[h.sheer.length-1],-PI/2+0.7,F*arg.post_len,-arg.post_curl,F*0.32);
       ctx.hull_extra.push(sp);
       let step = F*0.75/L;
@@ -2521,7 +2782,8 @@ function oar_bank(h,t0,t1,step,depth,len,ang,dx){
   for (let t = t0; t <= t1; t += step){
     let [x,y] = h.deck(t);
     let p = [x+dx,y+depth];
-    let q = [p[0]-Math.sin(ang)*len,p[1]+Math.cos(ang)*len];
+    // tossed oars are held upright, blades to the sky
+    let q = ALT.tossed ? [p[0]-Math.sin(0.25)*len*0.8,p[1]-Math.cos(0.25)*len*0.8] : [p[0]-Math.sin(ang)*len,p[1]+Math.cos(ang)*len];
     oars.lines.push(...spar(p,q,0.8).lines,ellipse(...p,1.2,1.2,0,8));
   }
   return oars;
@@ -2542,7 +2804,7 @@ function single_square(ctx,t,ht,half,stripes,furl){
     let BL = [fc[0]-half*1.05,fc[1]];
     let BR = [fc[0]+half*1.05,fc[1]];
     let hgt = dist(...a,...BL);
-    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.06,bulgeR:hgt*0.06,belly:hgt*0.08,shade:arg.sail_shade,stripes,seam:9}));
+    layers.sails.push(make_sail(a,b,BL,BR,{bulgeL:hgt*0.06,bulgeR:hgt*0.06,belly:hgt*0.08,shade:arg.sail_shade,stripes:ALT.lozenge ? 0 : stripes,lozenge:ALT.lozenge,seam:9}));
   }
   layers.masts.push({lines:m.lines,occ:[m.poly],head:m.head});
   layers.flags.push(flag(m.head,F*1.6,F*0.3,true,arg.sea_z));
@@ -2551,6 +2813,7 @@ function single_square(ctx,t,ht,half,stripes,furl){
 
 function ship(arg){
   HAND = arg.hand;
+  ALT = arg.alt || {};
   let h = hull_shape(arg);
   let L = h.L;
   let F = h.F;
@@ -2569,6 +2832,11 @@ function ship(arg){
   KINDS[arg.kind].build(ctx);
   let layers = ctx.layers;
 
+  // a painted band along the hull: a strip left white
+  if (ALT.hull){
+    let d0 = ctx.dark;
+    ctx.dark = k=>((k > 0.19 && k < 0.25) ? 0 : d0(k));
+  }
   // the hull: engraved tone, then ports and windows cut into it
   let planks = hull_lines(h,lerp(4.5,1.7,arg.hull_tone),ctx.dark,arg.sea_z+7);
   let deco = [];
@@ -2694,6 +2962,9 @@ function default_params(){
   };
 }
 
+// every element has a variant form; each ship draws each one in its variant form or not
+const VARIANTS = ['hull','muzzle','square_port','arch','lattice','patch','sprit','radial','settee','fan','lozenge','festoon','deadeye','nest','swallow','bell','wisp','covered','shield','dragon','tossed','almond','trident','tyre','louvre','twin','chop','flock'];
+
 // how often each kind turns up, and which kinds a name's prefix allows
 const KIND_WEIGHTS = {ship:3,brig:2,clipper:2,galleon:1.5,schooner:3,cutter:1.5,lateen:1.5,junk:1.5,longship:1.2,galley:1.2,steamer:2,tug:1,yacht:1,paddle:1,ironclad:0.8};
 const PREFIX_KINDS = {
@@ -2724,6 +2995,8 @@ function generate_params(name){
   arg.rake = rndtri(0,0.05,0.12);
   KINDS[arg.kind].params(arg);
   arg.hand = rndtri(0.5,1,1.6);
+  arg.alt = {};
+  for (let v of VARIANTS) arg.alt[v] = rand() < 0.35;
   return arg;
 }
 

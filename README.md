@@ -5,6 +5,7 @@
 ![](samples/000000.svg)
 
 - generates all sorts of ships in profile: full-rigged ships, brigantines, clippers, galleons, schooners, cutters, feluccas, junks, longships, galleys, steamers, tugs, steam yachts, paddle steamers and ironclads
+- every element also has a variant form, picked per ship: patched, sprit, radial-cut, settee and fan-battened sails, brailed festoons, crow's nests, deadeyes, lattice rails, open gunports, square ports, arched windows, swallowtail flags, bell-topped funnels, wispy smoke, covered boats, dragon heads, tossed oars, painted shields, a trident ram, tyre fenders, twin guns, whitecaps and a skein of birds
 - outputs polylines (supported format svg, json, csv, etc.)
 - full procedural generation, single file no dependencies
 - plotter-centric
