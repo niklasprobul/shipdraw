@@ -1603,27 +1603,22 @@ function sea(h,xa,xb,arg){
   let surface = [];
   for (let x = xa; x <= xb; x += 2) surface.push([x,surf(x)]);
   let lines = [surface];
-  // the swell: long undulating lines, each row with its own wavelength, doubled on the far side
-  // of each swell, which falls away from the light
+  // the swell: long undulating lines, each row with its own wavelength. They run the full width
+  // of the picture but grow sparser away from the ship
   let under = x=>(x > h.xb && x < h.xs) ? 1 : 0;
+  let span = Math.max(h.xb-xa,xb-h.xs,1);
+  let near = x=>1-Math.pow(Math.min(1,Math.max(0,h.xb-x,x-h.xs)/span),0.8);
   let gap = 3;
   for (let d = gap, k = 0; d < F*2.8; d += gap, gap *= 1.17, k++){
     let amp = 0.6+k*0.35;
     let wl = 26+k*6+rand()*10;
     let ph = rand()*PI*2;
     let line = [];
-    let back = [];
     for (let x = xa; x <= xb; x += 1.5){
       let a = (x/wl)*PI*2+ph+noise(x*0.01,k,85)*3;
-      let y = surf(x)+d+Math.sin(a)*amp;
-      line.push([x,y]);
-      back.push(Math.cos(a) < -0.3 ? [x,y+1.1] : null);
+      line.push([x,surf(x)+d+Math.sin(a)*amp]);
     }
-    lines.push(...binclip(line,(x,y,t)=>(noise(x*0.02,k*2.3,86)*Math.sin(t*PI)+under(x)*0.3 > 0.3)).true);
-    let run = [];
-    for (let p of back.concat([null])){
-      if (p){ run.push(p); }else{ if (run.length > 2) lines.push(run); run = []; }
-    }
+    lines.push(...binclip(line,(x,y)=>(noise(x*0.02,k*2.3,86)*(0.35+0.65*near(x))+under(x)*0.3 > 0.3)).true);
   }
   let occ = [[xa-1e4,surf(xa)]].concat(surface,[[xb+1e4,surf(xb)],[xb+1e4,YW+1e4],[xa-1e4,YW+1e4]]);
   let fronts = [];
@@ -3141,6 +3136,15 @@ function ship(arg){
   let xa = Math.min(...pts.map(p=>p[0]))-L*0.12;
   let xb = Math.max(...pts.map(p=>p[0]))+L*0.12;
   let ytop = Math.min(...pts.map(p=>p[1]));
+  // the water reaches across the whole picture: as wide as the frame's proportions allow for
+  // the ship's height, so a tall ship gets a wide sea without being drawn any smaller
+  let ybot = YW+F*3.4;
+  let need = (ybot-ytop)*460/250*0.97;
+  if (xb-xa < need){
+    let c = (xa+xb)/2;
+    xa = c-need/2;
+    xb = c+need/2;
+  }
   let s = sea(h,xa,xb,arg);
 
   let birds = {lines:gulls(xa,xb,ytop-L*0.02,ytop+L*0.12,poisson(arg.gulls)),occ:[]};
