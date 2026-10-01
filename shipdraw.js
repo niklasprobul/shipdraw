@@ -1006,6 +1006,39 @@ function pt_in_poly(x,y,poly){
 // the ship floats on this line; it faces left, bow at small x
 const YW = 200;
 
+// how much the drawing departs from the ruler: scales every random bend, sag and wobble.
+// set from the ship's parameters at the start of ship()
+let HAND = 1;
+
+// a random factor around 1, spreading wider with HAND
+function vary(spread){
+  return 1+(rand()*2-1)*spread*HAND;
+}
+
+// the engraver's hand: every line is resampled and pushed about by a smooth noise field.
+// The field depends only on position, so lines that meet still meet afterwards
+function hand_drawn(polylines,amp,freq,z){
+  return polylines.map(p=>{
+    let q = p.length > 1 ? resample(p,2) : p;
+    return q.map(([x,y])=>[
+      x+(noise(x*freq,y*freq,z)-0.5)*amp+(noise(x*freq*4,y*freq*4,z+5)-0.5)*amp*0.12,
+      y+(noise(x*freq,y*freq,z+9)-0.5)*amp+(noise(x*freq*4,y*freq*4,z+13)-0.5)*amp*0.12,
+    ]);
+  });
+}
+
+// a rope between two points hangs in a shallow curve; its slack varies from rope to rope
+function sag(line,amount){
+  if (line.length != 2) return line;
+  let [a,b] = line;
+  let l = dist(...a,...b);
+  if (l < 6) return line;
+  let d = l*amount*HAND*(0.4+rand());
+  let c1 = lerp2d(...a,...b,0.33);
+  let c2 = lerp2d(...a,...b,0.67);
+  return bezier3(a,[c1[0],c1[1]+d],[c2[0],c2[1]+d],b,Math.max(6,~~(l/6)));
+}
+
 // the hull in profile: a sheer line (the deck edge) that rises toward bow and stern,
 // a bow and a stern profile, and a keel well below the water
 function hull_shape(arg){
@@ -1017,7 +1050,8 @@ function hull_shape(arg){
   let ysh = t=>{
     t = Math.max(0,Math.min(1,t));
     let e = arg.sheer_pow || 2.2;
-    return YW-F-F*arg.sheer*(arg.bow_rise*Math.pow(1-t,e)+arg.stern_rise*Math.pow(t,e));
+    let wander = (noise(t*2.2,arg.sea_z+3)-0.5)*F*0.5*HAND*Math.sin(PI*Math.min(1,t*1.2));
+    return YW-F-F*arg.sheer*(arg.bow_rise*Math.pow(1-t,e)+arg.stern_rise*Math.pow(t,e))+wander;
   };
   let deck = t=>[lerp(xb,xs,t),ysh(t)];
   let n = 64;
@@ -1027,12 +1061,14 @@ function hull_shape(arg){
   }
   let [bx,by] = sheer[0];
   let [sx,sy] = sheer[n-1];
-  let bow = bezier3([bx,by],[lerp(bx,0,0.4)-arg.bow_curve*F,lerp(by,YW,0.75)],[-L*0.01,YW+D*0.5],[L*0.12,YW+D],20);
+  // the bow and stern are Bezier curves whose handles are nudged at random
+  let j = ()=>(rand()*2-1)*F*0.35*HAND;
+  let bow = bezier3([bx,by],[lerp(bx,0,0.4)-arg.bow_curve*F+j(),lerp(by,YW,0.75)+j()],[-L*0.01+j(),YW+D*0.5+j()],[L*0.12*vary(0.3),YW+D],24);
   let stern;
   if (arg.transom){
-    stern = bezier3([sx,sy],[lerp(sx,L,0.4),lerp(sy,YW,0.4)],[L+L*0.005,YW+D*0.3],[L*0.88,YW+D],20);
+    stern = bezier3([sx,sy],[lerp(sx,L,0.4)+j(),lerp(sy,YW,0.4)+j()],[L+L*0.005+j(),YW+D*0.3+j()],[L*0.88,YW+D],24);
   }else{
-    stern = bezier3([sx,sy],[sx+F*0.08,lerp(sy,YW,0.8)],[L+L*0.03,YW+D*0.2],[L*0.88,YW+D],20);
+    stern = bezier3([sx,sy],[sx+F*0.08+j(),lerp(sy,YW,0.8)+j()],[L+L*0.03+j(),YW+D*0.2+j()],[L*0.88,YW+D],24);
   }
   let outline = sheer.concat(stern.slice(1),bow.slice().reverse().slice(0,-1));
   return {L,F,D,xb,xs,ysh,deck,sheer,bow,stern,outline,tx:x=>(x-xb)/(xs-xb)};
@@ -1129,8 +1165,15 @@ function deck_rail(h,t0,t1,height){
 function make_mast(base,height,rake,w0){
   let dir = [Math.sin(rake),-Math.cos(rake)];
   let aft = [Math.cos(rake),Math.sin(rake)];
-  let at = u=>[base[0]+dir[0]*height*u,base[1]+dir[1]*height*u];
-  let path = resample([at(-0.05),at(1)],2);
+  // spars are never quite straight: the mast bows a little, one way or the other
+  let bend = (rand()*2-1)*0.025*HAND;
+  let at = u=>{
+    let b = bend*height*Math.sin(PI*Math.max(0,u));
+    return [base[0]+dir[0]*height*u+aft[0]*b,base[1]+dir[1]*height*u+aft[1]*b];
+  };
+  let path = [];
+  for (let u = -0.05; u <= 1+1e-6; u += 0.05) path.push(at(u));
+  path = resample(path,2);
   let [l,r] = tube(path,u=>w0*(1-0.6*u));
   let poly = l.concat(r.slice().reverse());
   return {at,dir,aft,base,height,w0,head:at(1),lines:[l,r,[l[l.length-1],r[r.length-1]]],poly};
@@ -1140,15 +1183,23 @@ function make_mast(base,height,rake,w0){
 // A triangle has TL == TR. The sides belly out by bulge, the foot by belly; seams run head
 // to foot, shading gathers on the leech side, reef bands cross under the head
 function make_sail(TL,TR,BL,BR,o){
-  let bl = o.bulgeL || 0;
-  let br = o.bulgeR || 0;
-  let belly = o.belly || 0;
+  // every sail fills differently: its belly and bulge vary, its foot corners are pulled about,
+  // and a smooth noise ripples the cloth so no edge is a clean arc
+  let bl = (o.bulgeL || 0)*vary(0.5);
+  let br = (o.bulgeR || 0)*vary(0.5);
+  let belly = (o.belly || 0)*vary(0.5);
+  let size = Math.max(dist(...TL,...BL),dist(...TR,...BR),dist(...BL,...BR));
+  let fj = ()=>(rand()*2-1)*size*0.03*HAND;
+  BL = [BL[0]+fj(),BL[1]+fj()];
+  BR = [BR[0]+fj(),BR[1]+fj()];
+  let zs = rand()*100;
   let P = (f,g)=>{
     let top = lerp2d(...TL,...TR,f);
     let bot = lerp2d(...BL,...BR,f);
     let p = lerp2d(...top,...bot,g);
     let side = f < 0.5 ? -(1-2*f)*bl : (2*f-1)*br;
-    return [p[0]+side*Math.sin(PI*g),p[1]+belly*g*Math.sin(PI*f)];
+    let rip = (noise(f*2.5,g*2.5,zs)-0.5)*size*0.06*HAND*Math.sin(PI*g)*(0.3+Math.sin(PI*f));
+    return [p[0]+side*Math.sin(PI*g)+rip,p[1]+belly*g*Math.sin(PI*f)+rip*0.5];
   };
   let n = 20;
   let outline = [];
@@ -1245,7 +1296,8 @@ function furled(a,b){
 function spar(a,b,w){
   let e = w*2/(dist(...a,...b) || 1);
   [a,b] = [lerp2d(...a,...b,-e),lerp2d(...a,...b,1+e)];
-  let path = resample([a,b],2);
+  let d = dist(...a,...b)*0.012*HAND*(rand()*2-0.5);
+  let path = resample(bezier3(a,[lerp(a[0],b[0],0.33),lerp(a[1],b[1],0.33)+d],[lerp(a[0],b[0],0.67),lerp(a[1],b[1],0.67)+d],b,12),2);
   let [l,r] = tube(path,u=>w*(1-0.4*Math.abs(u-0.5)*2));
   return {lines:[l,r,[l[0],r[0]],[l[l.length-1],r[r.length-1]]],occ:[l.concat(r.slice().reverse())]};
 }
@@ -1272,12 +1324,15 @@ function shrouds(h,m,u,n,spread){
 // a flag streaming aft from p: a waving strip, hatched in stripes
 function flag(p,len,wid,tri,z){
   let n = 24;
+  let fw = 1.6+rand()*1.6;
+  let fa = 0.15+rand()*0.2*HAND;
+  len *= vary(0.25);
   let top = [];
   let bot = [];
   for (let i = 0; i <= n; i++){
     let u = i/n;
     let x = p[0]+len*u;
-    let wave = Math.sin(u*PI*2.2+z)*wid*0.25*u;
+    let wave = Math.sin(u*PI*fw+z)*wid*fa*u+(noise(u*3,z,77)-0.5)*wid*0.4*u*HAND;
     let w = wid*(tri ? 1-u*0.9 : 1);
     top.push([x,p[1]+wave]);
     bot.push([x,p[1]+wave+w]);
@@ -1358,7 +1413,9 @@ function boat(x,y,len,ht){
 function funnel(base,w,ht,rake,bands){
   let dir = [Math.sin(rake),-Math.cos(rake)];
   let aft = [Math.cos(rake),Math.sin(rake)];
-  let at = (f,u)=>[base[0]+aft[0]*w*(f-0.5)+dir[0]*ht*u,base[1]+aft[1]*w*(f-0.5)+dir[1]*ht*u];
+  let taper = (rand()*2-1)*0.12*HAND;
+  ht *= vary(0.12);
+  let at = (f,u)=>[base[0]+aft[0]*w*(f-0.5)*(1-taper*u)+dir[0]*ht*u,base[1]+aft[1]*w*(f-0.5)*(1-taper*u)+dir[1]*ht*u];
   let poly = [at(0,-0.1),at(1,-0.1),at(1,1),at(0.5,1.02),at(0,1)];
   let lines = [poly.concat([poly[0]])];
   let top = [at(0,1),at(0,0.82),at(1,0.82),at(1,1)];
@@ -1403,7 +1460,8 @@ function smoke(p,r0,n,z){
 // the bow wave and the wake. Everything under the surface is hidden
 function sea(h,xa,xb,arg){
   let F = h.F;
-  let surf = x=>YW+(noise(x*0.015,arg.sea_z)-0.5)*F*arg.chop+Math.sin(x*0.08+arg.sea_z)*F*arg.chop*0.08;
+  let sw = 0.05+rand()*0.06;
+  let surf = x=>YW+(noise(x*0.015,arg.sea_z)-0.5)*F*arg.chop*(1+HAND*0.5)+Math.sin(x*sw+arg.sea_z)*F*arg.chop*0.08*HAND+(noise(x*0.06,arg.sea_z+4)-0.5)*F*0.15*HAND;
   let surface = [];
   for (let x = xa; x <= xb; x += 2) surface.push([x,surf(x)]);
   let lines = [surface];
@@ -2492,6 +2550,7 @@ function single_square(ctx,t,ht,half,stripes,furl){
 }
 
 function ship(arg){
+  HAND = arg.hand;
   let h = hull_shape(arg);
   let L = h.L;
   let F = h.F;
@@ -2534,8 +2593,8 @@ function ship(arg){
     let y = h.ysh(t);
     return (t > -0.05 && t < 1.05 && Math.abs(p[1]-y) < 0.8) ? [p[0],y-0.8] : p;
   };
-  layers.rig = layers.rig.map(l=>l.map(lift));
-  layers.stays = layers.stays.map(l=>l.map(lift));
+  layers.rig = layers.rig.map(l=>sag(l.map(lift),0.012));
+  layers.stays = layers.stays.map(l=>sag(l.map(lift),0.02));
 
   // the sea, sized to the whole ship
   let pts = [h.outline,...ctx.hull_extra.map(e=>e.occ).flat(),...layers.sails.map(s=>s.occ).flat(),...layers.stays,...ctx.behind.map(e=>e.occ).flat()].flat();
@@ -2546,7 +2605,7 @@ function ship(arg){
 
   let birds = {lines:gulls(xa,xb,ytop-L*0.02,ytop+L*0.12,arg.gulls),occ:[]};
 
-  return compose([
+  let drawing = compose([
     ...s.fronts,
     s.layer,
     ...ctx.front,
@@ -2561,6 +2620,7 @@ function ship(arg){
     ...layers.flags,
     birds,
   ]);
+  return hand_drawn(drawing,1.6*HAND,0.035,arg.sea_z+21);
 }
 
 
@@ -2630,6 +2690,7 @@ function default_params(){
     speed:0.6,
     sea_z:0,
     gulls:2,
+    hand:1,
   };
 }
 
@@ -2662,6 +2723,7 @@ function generate_params(name){
   arg.sail_shade = rndtri(0.2,0.5,0.8);
   arg.rake = rndtri(0,0.05,0.12);
   KINDS[arg.kind].params(arg);
+  arg.hand = rndtri(0.5,1,1.6);
   return arg;
 }
 
